@@ -1,0 +1,29 @@
+# Local tools and build caches
+/.tools/
+/.cache/
+/.superpowers/
+/.worktrees/
+
+# Build and test output
+/dist/
+/coverage/
+*.test
+*.out
+*.exe
+
+# Runtime state and secrets
+.env
+/.env
+/db/
+/.teamkit/
+*.receipt.json
+certs.zip
+/certs/
+*.pem
+*.key
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

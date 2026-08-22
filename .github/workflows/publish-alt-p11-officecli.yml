@@ -1,0 +1,362 @@
+name: publish-alt-p11-officecli
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact commit SHA to qualify
+        required: true
+        type: string
+      mode:
+        description: Discover runtime providers or publish the qualification image
+        required: true
+        default: discover
+        type: choice
+        options: [discover, publish]
+      alt_librt_package:
+        description: Exact evidence-backed ALT RPM NEVRA required for publish
+        required: false
+        type: string
+      alt_ldd_package:
+        description: Exact evidence-backed ALT RPM NEVRA for /usr/bin/ldd required for publish
+        required: false
+        type: string
+      alt_icu_package:
+        description: Exact evidence-backed ALT RPM NEVRA for the ICU runtime required for publish
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  ALT_BASE_IMAGE: registry.altlinux.org/p11/alt@sha256:4c76520bb4935edf624dde76d5e670d54f40938323b185c4c7270881b71fd8ea
+  ALT_OFFICECLI_IMAGE: ghcr.io/i437918/kit-all-team/alt-p11-officecli
+
+jobs:
+  discover:
+    if: inputs.mode == 'discover' || inputs.mode == 'publish'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      alt-librt-package: ${{ steps.discover.outputs.alt_librt_package }}
+      alt-librt-apt-spec: ${{ steps.discover.outputs.alt_librt_apt_spec }}
+      alt-ldd-package: ${{ steps.discover.outputs.alt_ldd_package }}
+      alt-ldd-apt-spec: ${{ steps.discover.outputs.alt_ldd_apt_spec }}
+      alt-icu-package: ${{ steps.discover.outputs.alt_icu_package }}
+      alt-icu-apt-spec: ${{ steps.discover.outputs.alt_icu_apt_spec }}
+    steps:
+      - name: Bind dispatch to the requested commit before checkout work
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_SHA" = "$EXPECTED_SHA"
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ inputs.expected_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Verify checked out commit
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - id: discover
+        name: Discover official runtime providers
+        shell: bash
+        run: |
+          set -euo pipefail
+          # glibc-pthread is only the bounded discovery candidate, never a
+          # publication assumption. The recorded owner determines publication.
+          discovery=$(docker run --rm \
+            --env ALT_LIBRT_DISCOVERY_CANDIDATE=glibc-pthread \
+            --env ALT_LDD_DISCOVERY_CANDIDATE=glibc-utils \
+            --env ALT_ICU_DISCOVERY_CANDIDATE=libicu74 \
+            "$ALT_BASE_IMAGE" /bin/bash -lc '
+              set -euo pipefail
+              apt-get update
+              apt-get install -y "$ALT_LIBRT_DISCOVERY_CANDIDATE" "$ALT_LDD_DISCOVERY_CANDIDATE" "$ALT_ICU_DISCOVERY_CANDIDATE"
+              owner="$(rpm -qf /lib64/librt.so.1)"
+              ALT_LIBRT_OWNER="$(rpm -q --qf '\''%{NAME}-%{EPOCHNUM}:%{VERSION}-%{RELEASE}.%{ARCH}\n'\'' "$owner")"
+              ALT_LIBRT_PACKAGE="$ALT_LIBRT_OWNER"
+              test "$ALT_LIBRT_OWNER" = "$ALT_LIBRT_PACKAGE"
+              ALT_LIBRT_NAME="$(rpm -q --qf '\''%{NAME}\n'\'' "$owner")"
+              ALT_LIBRT_EVR="$(rpm -q --qf '\''%{EPOCHNUM}:%{VERSION}-%{RELEASE}\n'\'' "$owner")"
+              ALT_LIBRT_APT_SPEC="$ALT_LIBRT_NAME=$ALT_LIBRT_EVR"
+              [[ "$ALT_LIBRT_APT_SPEC" =~ ^[A-Za-z0-9][A-Za-z0-9+._-]*=[^[:space:]=]+$ ]]
+              printf "ALT_LIBRT_APT_SPEC=%s\\n" "$ALT_LIBRT_APT_SPEC"
+              ldd_owner="$(rpm -qf /usr/bin/ldd)"
+              ALT_LDD_OWNER="$(rpm -q --qf '\''%{NAME}-%{EPOCHNUM}:%{VERSION}-%{RELEASE}.%{ARCH}\n'\'' "$ldd_owner")"
+              ALT_LDD_PACKAGE="$ALT_LDD_OWNER"
+              test "$ALT_LDD_OWNER" = "$ALT_LDD_PACKAGE"
+              ALT_LDD_NAME="$(rpm -q --qf '\''%{NAME}\n'\'' "$ldd_owner")"
+              ALT_LDD_EVR="$(rpm -q --qf '\''%{EPOCHNUM}:%{VERSION}-%{RELEASE}\n'\'' "$ldd_owner")"
+              ALT_LDD_APT_SPEC="$ALT_LDD_NAME=$ALT_LDD_EVR"
+              [[ "$ALT_LDD_APT_SPEC" =~ ^[A-Za-z0-9][A-Za-z0-9+._-]*=[^[:space:]=]+$ ]]
+              printf "ALT_LDD_APT_SPEC=%s\\n" "$ALT_LDD_APT_SPEC"
+              test -r /usr/lib64/libicuuc.so.74
+              test -r /usr/lib64/libicudata.so.74
+              icu_owner="$(rpm -qf /usr/lib64/libicuuc.so.74)"
+              icu_data_owner="$(rpm -qf /usr/lib64/libicudata.so.74)"
+              ALT_ICU_OWNER="$(rpm -q --qf '\''%{NAME}-%{EPOCHNUM}:%{VERSION}-%{RELEASE}.%{ARCH}\n'\'' "$icu_owner")"
+              ALT_ICU_DATA_OWNER="$(rpm -q --qf '\''%{NAME}-%{EPOCHNUM}:%{VERSION}-%{RELEASE}.%{ARCH}\n'\'' "$icu_data_owner")"
+              ALT_ICU_PACKAGE="$ALT_ICU_OWNER"
+              test "$ALT_ICU_OWNER" = "$ALT_ICU_PACKAGE"
+              test "$ALT_ICU_DATA_OWNER" = "$ALT_ICU_PACKAGE"
+              ALT_ICU_NAME="$(rpm -q --qf '\''%{NAME}\n'\'' "$icu_owner")"
+              ALT_ICU_EVR="$(rpm -q --qf '\''%{EPOCHNUM}:%{VERSION}-%{RELEASE}\n'\'' "$icu_owner")"
+              ALT_ICU_APT_SPEC="$ALT_ICU_NAME=$ALT_ICU_EVR"
+              [[ "$ALT_ICU_APT_SPEC" =~ ^[A-Za-z0-9][A-Za-z0-9+._-]*=[^[:space:]=]+$ ]]
+              printf "ALT_ICU_APT_SPEC=%s\n" "$ALT_ICU_APT_SPEC"
+              printf "ALT_ICU_PATH=/usr/lib64/libicuuc.so.74\n"
+              printf "ALT_ICU_DATA_PATH=/usr/lib64/libicudata.so.74\n"
+              printf "ALT_ICU_DATA_OWNER=%s\n" "$ALT_ICU_DATA_OWNER"
+              printf "ALT_ICU_PACKAGE=%s\n" "$ALT_ICU_PACKAGE"
+              printf "ALT_ICU_OWNER=%s\n" "$ALT_ICU_OWNER"
+              printf "ALT_LDD_PATH=/usr/bin/ldd\\n"
+              printf "ALT_LDD_PACKAGE=%s\\n" "$ALT_LDD_PACKAGE"
+              printf "ALT_LDD_OWNER=%s\\n" "$ALT_LDD_OWNER"
+              printf "ALT_LIBRT_PATH=/lib64/librt.so.1\\n"
+              printf "ALT_LIBRT_PACKAGE=%s\\n" "$ALT_LIBRT_PACKAGE"
+              printf "ALT_LIBRT_OWNER=%s\\n" "$ALT_LIBRT_OWNER"
+            ')
+          printf '%s\n' "$discovery"
+          mapfile -t packages < <(printf '%s\n' "$discovery" | sed -n 's/^ALT_LIBRT_PACKAGE=//p')
+          mapfile -t owners < <(printf '%s\n' "$discovery" | sed -n 's/^ALT_LIBRT_OWNER=//p')
+          mapfile -t apt_specs < <(printf '%s\n' "$discovery" | sed -n 's/^ALT_LIBRT_APT_SPEC=//p')
+          mapfile -t ldd_packages < <(printf '%s\n' "$discovery" | sed -n 's/^ALT_LDD_PACKAGE=//p')
+          mapfile -t ldd_owners < <(printf '%s\n' "$discovery" | sed -n 's/^ALT_LDD_OWNER=//p')
+          mapfile -t ldd_apt_specs < <(printf '%s\n' "$discovery" | sed -n 's/^ALT_LDD_APT_SPEC=//p')
+          mapfile -t icu_packages < <(printf '%s\n' "$discovery" | sed -n 's/^ALT_ICU_PACKAGE=//p')
+          mapfile -t icu_owners < <(printf '%s\n' "$discovery" | sed -n 's/^ALT_ICU_OWNER=//p')
+          mapfile -t icu_apt_specs < <(printf '%s\n' "$discovery" | sed -n 's/^ALT_ICU_APT_SPEC=//p')
+          test "${#packages[@]}" -eq 1
+          test "${#owners[@]}" -eq 1
+          test "${#apt_specs[@]}" -eq 1
+          test "${#ldd_packages[@]}" -eq 1
+          test "${#ldd_owners[@]}" -eq 1
+          test "${#ldd_apt_specs[@]}" -eq 1
+          test "${#icu_packages[@]}" -eq 1
+          test "${#icu_owners[@]}" -eq 1
+          test "${#icu_apt_specs[@]}" -eq 1
+          ALT_LIBRT_PACKAGE="${packages[0]}"
+          ALT_LIBRT_OWNER="${owners[0]}"
+          ALT_LIBRT_APT_SPEC="${apt_specs[0]}"
+          ALT_LDD_PACKAGE="${ldd_packages[0]}"
+          ALT_LDD_OWNER="${ldd_owners[0]}"
+          ALT_LDD_APT_SPEC="${ldd_apt_specs[0]}"
+          ALT_ICU_PACKAGE="${icu_packages[0]}"
+          ALT_ICU_OWNER="${icu_owners[0]}"
+          ALT_ICU_APT_SPEC="${icu_apt_specs[0]}"
+          test -n "$ALT_LIBRT_PACKAGE"
+          test "$ALT_LIBRT_OWNER" = "$ALT_LIBRT_PACKAGE"
+          test -n "$ALT_LDD_PACKAGE"
+          test "$ALT_LDD_OWNER" = "$ALT_LDD_PACKAGE"
+          test -n "$ALT_ICU_PACKAGE"
+          test "$ALT_ICU_OWNER" = "$ALT_ICU_PACKAGE"
+          printf 'alt_librt_package=%s\n' "$ALT_LIBRT_PACKAGE" >> "$GITHUB_OUTPUT"
+          [[ "$ALT_LIBRT_APT_SPEC" =~ ^[A-Za-z0-9][A-Za-z0-9+._-]*=[^[:space:]=]+$ ]]
+          printf 'alt_librt_apt_spec=%s\n' "$ALT_LIBRT_APT_SPEC" >> "$GITHUB_OUTPUT"
+          [[ "$ALT_LDD_APT_SPEC" =~ ^[A-Za-z0-9][A-Za-z0-9+._-]*=[^[:space:]=]+$ ]]
+          printf 'alt_ldd_package=%s\n' "$ALT_LDD_PACKAGE" >> "$GITHUB_OUTPUT"
+          printf 'alt_ldd_apt_spec=%s\n' "$ALT_LDD_APT_SPEC" >> "$GITHUB_OUTPUT"
+          [[ "$ALT_ICU_APT_SPEC" =~ ^[A-Za-z0-9][A-Za-z0-9+._-]*=[^[:space:]=]+$ ]]
+          printf 'alt_icu_package=%s\n' "$ALT_ICU_PACKAGE" >> "$GITHUB_OUTPUT"
+          printf 'alt_icu_apt_spec=%s\n' "$ALT_ICU_APT_SPEC" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: discover
+    if: inputs.mode == 'publish'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Bind dispatch to the requested commit before checkout work
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_SHA" = "$EXPECTED_SHA"
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ inputs.expected_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+          check-latest: false
+      - name: Verify checked out commit and exact RPM evidence
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          ALT_LIBRT_PACKAGE: ${{ needs.discover.outputs.alt-librt-package }}
+          MODE: ${{ inputs.mode }}
+          ALT_LIBRT_APT_SPEC: ${{ needs.discover.outputs.alt-librt-apt-spec }}
+          ALT_LDD_PACKAGE: ${{ needs.discover.outputs.alt-ldd-package }}
+          ALT_LDD_APT_SPEC: ${{ needs.discover.outputs.alt-ldd-apt-spec }}
+          REQUESTED_ALT_LIBRT_PACKAGE: ${{ inputs.alt_librt_package }}
+          REQUESTED_ALT_LDD_PACKAGE: ${{ inputs.alt_ldd_package }}
+          ALT_ICU_PACKAGE: ${{ needs.discover.outputs.alt-icu-package }}
+          ALT_ICU_APT_SPEC: ${{ needs.discover.outputs.alt-icu-apt-spec }}
+          REQUESTED_ALT_ICU_PACKAGE: ${{ inputs.alt_icu_package }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          [[ "$ALT_LIBRT_PACKAGE" =~ ^[A-Za-z0-9][A-Za-z0-9+._-]*-[0-9]+:[A-Za-z0-9+._~:-]+-[A-Za-z0-9+._~]+\.[A-Za-z0-9_]+$ ]]
+          [[ "$ALT_LIBRT_APT_SPEC" =~ ^[A-Za-z0-9][A-Za-z0-9+._-]*=[^[:space:]=]+$ ]]
+          [[ "$ALT_LDD_PACKAGE" =~ ^[A-Za-z0-9][A-Za-z0-9+._-]*-[0-9]+:[A-Za-z0-9+._~:-]+-[A-Za-z0-9+._~]+\.[A-Za-z0-9_]+$ ]]
+          [[ "$ALT_ICU_PACKAGE" =~ ^[A-Za-z0-9][A-Za-z0-9+._-]*-[0-9]+:[A-Za-z0-9+._~:-]+-[A-Za-z0-9+._~]+\.[A-Za-z0-9_]+$ ]]
+          [[ "$ALT_ICU_APT_SPEC" =~ ^[A-Za-z0-9][A-Za-z0-9+._-]*=[^[:space:]=]+$ ]]
+          [[ "$ALT_LDD_APT_SPEC" =~ ^[A-Za-z0-9][A-Za-z0-9+._-]*=[^[:space:]=]+$ ]]
+          if [[ "$MODE" == publish ]]; then
+            test -n "$REQUESTED_ALT_LIBRT_PACKAGE"
+            test "$REQUESTED_ALT_LIBRT_PACKAGE" = "$ALT_LIBRT_PACKAGE"
+            test -n "$REQUESTED_ALT_LDD_PACKAGE"
+            test "$REQUESTED_ALT_LDD_PACKAGE" = "$ALT_LDD_PACKAGE"
+            test -n "$REQUESTED_ALT_ICU_PACKAGE"
+            test "$REQUESTED_ALT_ICU_PACKAGE" = "$ALT_ICU_PACKAGE"
+          fi
+      - name: Build unpushed qualification candidate
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          ALT_LIBRT_PACKAGE: ${{ needs.discover.outputs.alt-librt-package }}
+          ALT_LIBRT_APT_SPEC: ${{ needs.discover.outputs.alt-librt-apt-spec }}
+          ALT_LDD_PACKAGE: ${{ needs.discover.outputs.alt-ldd-package }}
+          ALT_LDD_APT_SPEC: ${{ needs.discover.outputs.alt-ldd-apt-spec }}
+          ALT_ICU_PACKAGE: ${{ needs.discover.outputs.alt-icu-package }}
+          ALT_ICU_APT_SPEC: ${{ needs.discover.outputs.alt-icu-apt-spec }}
+        run: |
+          set -euo pipefail
+          qualification_image="$ALT_OFFICECLI_IMAGE:qualification-$EXPECTED_SHA"
+          docker build \
+            --platform linux/amd64 \
+            --file docker/alt-p11-officecli/Dockerfile \
+            --build-arg ALT_LIBRT_APT_SPEC="$ALT_LIBRT_APT_SPEC" \
+            --build-arg ALT_LIBRT_PACKAGE="$ALT_LIBRT_PACKAGE" \
+            --tag "$qualification_image" \
+            --build-arg ALT_LDD_PACKAGE="$ALT_LDD_PACKAGE" \
+            --build-arg ALT_LDD_APT_SPEC="$ALT_LDD_APT_SPEC" \
+            --build-arg ALT_ICU_PACKAGE="$ALT_ICU_PACKAGE" \
+            --build-arg ALT_ICU_APT_SPEC="$ALT_ICU_APT_SPEC" \
+            .
+          docker image inspect "$qualification_image" >/dev/null
+      - name: Qualify actual OfficeCLI in candidate image
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          ALT_LIBRT_PACKAGE: ${{ needs.discover.outputs.alt-librt-package }}
+          TEAMKIT_OFFICECLI_KEEP_PATH: ${{ github.workspace }}/dist/evidence/officecli
+          ALT_ICU_PACKAGE: ${{ needs.discover.outputs.alt-icu-package }}
+          ALT_LDD_PACKAGE: ${{ needs.discover.outputs.alt-ldd-package }}
+        run: |
+          set -euo pipefail
+          qualification_image="$ALT_OFFICECLI_IMAGE:qualification-$EXPECTED_SHA"
+          mkdir -p dist/evidence/officecli
+          go test -tags officecli_live ./internal/service -run TestOfficeCLILive_QualifiedAssetAndMCPHandshake -count=1 -timeout=3m
+          officecli_asset=dist/evidence/officecli/officecli-linux-x64
+          test -f "$officecli_asset"
+          chmod 0755 "$officecli_asset"
+          test "$(wc -c < "$officecli_asset")" -eq 35316133
+          printf '%s  %s\n' 32ef7a21a54a4ca6c9806bf5e9f3d32bfb1291017329c55044cb2aac71822eb8 "$officecli_asset" | sha256sum --check --strict
+          CGO_ENABLED=0 go test -c -tags officecli_live -o dist/evidence/officecli/officecli-live.test ./internal/service
+          chmod 0755 dist/evidence/officecli/officecli-live.test
+          scripts/qualify-alt-officecli-image.sh \
+            "$qualification_image" \
+            "$ALT_LIBRT_PACKAGE" \
+            "$ALT_LDD_PACKAGE" \
+            "$ALT_ICU_PACKAGE" \
+            "$officecli_asset" \
+            dist/evidence/officecli/officecli-live.test
+      - name: Authenticate the private registry
+        shell: bash
+        env:
+          DOCKER_CONFIG: ${{ runner.temp }}/alt-p11-officecli-docker-config-${{ github.run_id }}-${{ github.run_attempt }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          expected_docker_config="${RUNNER_TEMP:?}/alt-p11-officecli-docker-config-${GITHUB_RUN_ID:?}-${GITHUB_RUN_ATTEMPT:?}"
+          test "$DOCKER_CONFIG" = "$expected_docker_config"
+          test ! -e "$DOCKER_CONFIG"
+          install -d -m 0700 "$DOCKER_CONFIG"
+          printf '%s' "$GITHUB_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - id: push
+        name: Push verified qualification image
+        shell: bash
+        env:
+          DOCKER_CONFIG: ${{ runner.temp }}/alt-p11-officecli-docker-config-${{ github.run_id }}-${{ github.run_attempt }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          qualification_image="$ALT_OFFICECLI_IMAGE:qualification-$EXPECTED_SHA"
+          docker image inspect "$qualification_image" >/dev/null
+          docker push "$qualification_image" 2>&1 | tee push-metadata.txt
+          pushed_digest=$(scripts/docker-push-digest.sh < push-metadata.txt)
+          [[ "$pushed_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          IMAGE_DIGEST="$ALT_OFFICECLI_IMAGE@$pushed_digest"
+          printf 'image_digest=%s\n' "$IMAGE_DIGEST" >> "$GITHUB_OUTPUT"
+      - name: Qualify pushed immutable digest
+        shell: bash
+        env:
+          DOCKER_CONFIG: ${{ runner.temp }}/alt-p11-officecli-docker-config-${{ github.run_id }}-${{ github.run_attempt }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          ALT_LIBRT_PACKAGE: ${{ needs.discover.outputs.alt-librt-package }}
+          IMAGE_DIGEST: ${{ steps.push.outputs.image_digest }}
+          ALT_ICU_PACKAGE: ${{ needs.discover.outputs.alt-icu-package }}
+          ALT_LDD_PACKAGE: ${{ needs.discover.outputs.alt-ldd-package }}
+        run: |
+          set -euo pipefail
+          qualification_image="$ALT_OFFICECLI_IMAGE:qualification-$EXPECTED_SHA"
+          officecli_asset=dist/evidence/officecli/officecli-linux-x64
+          local_image_id=$(docker image inspect --format '{{.Id}}' "$qualification_image")
+          docker pull "$IMAGE_DIGEST"
+          remote_image_id=$(docker image inspect --format '{{.Id}}' "$IMAGE_DIGEST")
+          test "$remote_image_id" = "$local_image_id"
+          scripts/qualify-alt-officecli-image.sh \
+            "$IMAGE_DIGEST" \
+            "$ALT_LIBRT_PACKAGE" \
+            "$ALT_LDD_PACKAGE" \
+            "$ALT_ICU_PACKAGE" \
+            "$officecli_asset" \
+            dist/evidence/officecli/officecli-live.test
+      - name: Remove private registry credentials
+        if: always()
+        shell: bash
+        env:
+          DOCKER_CONFIG: ${{ runner.temp }}/alt-p11-officecli-docker-config-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          expected_docker_config="${RUNNER_TEMP:?}/alt-p11-officecli-docker-config-${GITHUB_RUN_ID:?}-${GITHUB_RUN_ATTEMPT:?}"
+          test -n "$DOCKER_CONFIG"
+          test "$DOCKER_CONFIG" = "$expected_docker_config"
+          case "$DOCKER_CONFIG" in
+            "$expected_docker_config") ;;
+            *) printf 'DOCKER_CONFIG_UNEXPECTED\n' >&2; exit 64 ;;
+          esac
+          docker logout ghcr.io >/dev/null 2>&1 || true
+          rm -rf -- "$DOCKER_CONFIG"
+          test ! -e "$DOCKER_CONFIG"
+      - name: Report immutable image digest
+        shell: bash
+        env:
+          IMAGE_DIGEST: ${{ steps.push.outputs.image_digest }}
+          ALT_ICU_PACKAGE: ${{ needs.discover.outputs.alt-icu-package }}
+          ALT_LIBRT_PACKAGE: ${{ needs.discover.outputs.alt-librt-package }}
+          ALT_LDD_PACKAGE: ${{ needs.discover.outputs.alt-ldd-package }}
+        run: |
+          set -euo pipefail
+          [[ "$IMAGE_DIGEST" =~ ^ghcr\.io/i437918/kit-all-team/alt-p11-officecli@sha256:[0-9a-f]{64}$ ]]
+          printf 'IMAGE_DIGEST=%s\n' "$IMAGE_DIGEST"
+          printf 'ALT_LIBRT_PACKAGE=%s\n' "$ALT_LIBRT_PACKAGE"
+          printf 'ALT_LDD_PACKAGE=%s\n' "$ALT_LDD_PACKAGE"
+          printf 'ALT_ICU_PACKAGE=%s\n' "$ALT_ICU_PACKAGE"

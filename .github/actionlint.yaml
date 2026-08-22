@@ -1,0 +1,11 @@
+self-hosted-runner:
+  # actionlint v1.7.7 predates these current GitHub-hosted labels; the labels are
+  # independently pinned by the platform contract and official runner matrix.
+  labels:
+    - macos-15-intel
+    - macos-26
+    - alt-p11
+
+config-variables:
+  - ENABLE_ALT_NATIVE
+  - TEST_GITLAB_USERNAME

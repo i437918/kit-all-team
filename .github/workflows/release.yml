@@ -1,0 +1,185 @@
+name: final-release-validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      ci_run_id:
+        description: Successful ci workflow run that tested candidate-binaries for this commit
+        required: true
+        type: string
+      candidate_digest:
+        description: Exact sha256 digest reported by upload-artifact for candidate-binaries
+        required: true
+        type: string
+      gitlab_sha256s:
+        description: Six newline-delimited "sha256 filename" rows from the kept exact-SHA GitLab job
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  VERSION: v0.1.5
+
+concurrency:
+  group: final-release-validation-v0.1.5
+  cancel-in-progress: false
+
+jobs:
+  validate-final-candidate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Gate validation on successful same-commit CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_RUN_ID: ${{ inputs.ci_run_id }}
+          CANDIDATE_ARTIFACT_DIGEST: ${{ inputs.candidate_digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CI_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$CANDIDATE_ARTIFACT_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$(gh api repos/"$GITHUB_REPOSITORY" --jq '.private')" = false
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID" --jq '.path')" = ".github/workflows/ci.yml"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID" --jq '.conclusion')" = "success"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID" --jq '.event')" = "workflow_dispatch"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID" --jq '.head_sha')" = "$GITHUB_SHA"
+          actual_digest=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID/artifacts" \
+            --jq '.artifacts[] | select(.name == "candidate-binaries" and .expired == false) | .digest')
+          test "$actual_digest" = "$CANDIDATE_ARTIFACT_DIGEST"
+          for artifact in security-auditor-tool alt-userspace-evidence; do
+            test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID/artifacts" \
+              --jq "[.artifacts[] | select(.name == \"$artifact\" and .expired == false)] | length")" = "1"
+          done
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID/artifacts" \
+            --jq '[.artifacts[] | select((.name | startswith("native-evidence-")) and .expired == false)] | length')" = "4"
+
+      - name: Download exact candidate
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: candidate-binaries
+          path: dist
+          run-id: ${{ inputs.ci_run_id }}
+          github-token: ${{ github.token }}
+      - name: Download security auditor from the gated CI run
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: security-auditor-tool
+          path: security-tool
+          run-id: ${{ inputs.ci_run_id }}
+          github-token: ${{ github.token }}
+      - name: Download required native evidence from the gated CI run
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          pattern: native-evidence-*
+          path: evidence/native
+          merge-multiple: true
+          run-id: ${{ inputs.ci_run_id }}
+          github-token: ${{ github.token }}
+      - name: Download required ALT p11 userspace evidence from the gated CI run
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: alt-userspace-evidence
+          path: evidence/alt-userspace
+          run-id: ${{ inputs.ci_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Verify exact final candidate and assemble validation evidence
+        env:
+          CI_RUN_ID: ${{ inputs.ci_run_id }}
+          CANDIDATE_ARTIFACT_DIGEST: ${{ inputs.candidate_digest }}
+          GITLAB_SHA256S: ${{ inputs.gitlab_sha256s }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum --check --strict SHA256SUMS)
+          for asset in \
+            teamkit-v0.1.5-windows-amd64.exe \
+            teamkit-v0.1.5-linux-amd64 \
+            teamkit-v0.1.5-darwin-amd64 \
+            teamkit-v0.1.5-darwin-arm64 \
+            SHA256SUMS SECURITY-AUDIT.json; do
+            test -s "dist/$asset"
+          done
+          printf '%s\n' "$GITLAB_SHA256S" > gitlab-SHA256SUMS
+          test "$(wc -l < gitlab-SHA256SUMS)" -eq 6
+          awk 'NF != 2 || $1 !~ /^[0-9a-f]{64}$/ { exit 1 }' gitlab-SHA256SUMS
+          for asset in \
+            teamkit-v0.1.5-windows-amd64.exe \
+            teamkit-v0.1.5-linux-amd64 \
+            teamkit-v0.1.5-darwin-amd64 \
+            teamkit-v0.1.5-darwin-arm64 \
+            SHA256SUMS SECURITY-AUDIT.json; do
+            test "$(grep -Ec "^[0-9a-f]{64}  ${asset}$" gitlab-SHA256SUMS)" -eq 1
+            expected=$(awk -v name="$asset" '$2 == name { print $1 }' gitlab-SHA256SUMS)
+            actual=$(sha256sum "dist/$asset" | awk '{ print $1 }')
+            test "$actual" = "$expected"
+          done
+          printf 'DUAL_CI_BYTE_COMPARE_OK files=6\n'
+          chmod 700 dist/teamkit-v0.1.5-linux-amd64
+          version_json=$(dist/teamkit-v0.1.5-linux-amd64 --version)
+          jq -e --arg commit "$GITHUB_SHA" \
+            '.version == "v0.1.5" and .commit == $commit' <<<"$version_json" >/dev/null
+
+          grep -F "candidate_digest=$CANDIDATE_ARTIFACT_DIGEST" evidence/alt-userspace/candidate.txt
+          for runner in windows-2025 ubuntu-24.04 macos-15-intel macos-15; do
+            test -s "evidence/native/native/$runner-tests.json"
+            grep -F "candidate_digest=$CANDIDATE_ARTIFACT_DIGEST" "evidence/native/native/$runner-candidate.txt"
+          done
+
+          security_manifests=(
+            dist/SECURITY-AUDIT.json
+            evidence/alt-userspace/security-audit-alt-userspace.json
+          )
+          for runner in windows-2025 ubuntu-24.04 macos-15-intel macos-15; do
+            security_manifests+=("evidence/native/native/security-audit-$runner.json")
+          done
+          for manifest in "${security_manifests[@]}"; do
+            test -s "$manifest"
+            jq -e --arg commit "$GITHUB_SHA" \
+              '.schema_version == 1 and .passed == true and .commit == $commit and (.findings | length) == 0' \
+              "$manifest" >/dev/null
+          done
+
+          {
+            printf '# Final release validation evidence\n\n'
+            printf -- '- Version: `%s`\n' "$VERSION"
+            printf -- '- Commit: `%s`\n' "$GITHUB_SHA"
+            printf -- '- Candidate artifact digest: `%s`\n' "$CANDIDATE_ARTIFACT_DIGEST"
+            printf -- '- Gated CI run: `%s/actions/runs/%s`\n' "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" "$CI_RUN_ID"
+            printf -- '- Classification: final (non-prerelease), unsigned internal release\n'
+            printf -- '- Trusted corporate-network evidence: unavailable for this exact commit; not a validation gate\n'
+            printf -- '- ALT evidence: pinned p11 userspace only; native ALT and QEMU/VM are unverified and are not validation gates\n'
+            printf -- '- Publication: GitHub validation only; GitLab is the only publisher\n'
+          } > dist/RELEASE-EVIDENCE.md
+          tar -czf dist/RELEASE-EVIDENCE.tar.gz -C evidence .
+
+          (cd security-tool && sha256sum --check --strict SHA256SUMS)
+          chmod 700 security-tool/security-auditor-linux-amd64
+          security-tool/security-auditor-linux-amd64 \
+            --path dist --path evidence --commit "$GITHUB_SHA" \
+            --output dist/RELEASE-SECURITY-AUDIT.json
+          jq -e --arg commit "$GITHUB_SHA" \
+            '.schema_version == 1 and .passed == true and .commit == $commit and (.findings | length) == 0' \
+            dist/RELEASE-SECURITY-AUDIT.json >/dev/null
+          (cd dist && sha256sum \
+            RELEASE-EVIDENCE.md RELEASE-EVIDENCE.tar.gz \
+            SECURITY-AUDIT.json RELEASE-SECURITY-AUDIT.json \
+            > EVIDENCE-SHA256SUMS)
+          printf 'FINAL_RELEASE_VALIDATION_OK version=%s commit=%s\n' "$VERSION" "$GITHUB_SHA"
+
+      - name: Upload checked validation evidence
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: final-release-validation-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            dist/RELEASE-EVIDENCE.md
+            dist/RELEASE-EVIDENCE.tar.gz
+            dist/RELEASE-SECURITY-AUDIT.json
+            dist/EVIDENCE-SHA256SUMS
