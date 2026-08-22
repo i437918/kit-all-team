@@ -1,0 +1,19 @@
+name: local-artifact-probe
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - run: |
+          printf 'teamkit-local-artifact-probe-v1\n' > probe.txt
+          sha256sum probe.txt > probe.sha256
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: local-download-probe
+          path: |
+            probe.txt
+            probe.sha256
+          retention-days: 1
