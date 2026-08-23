@@ -51,13 +51,13 @@ func TestDefaultOperationContract_HermesBindsOrderedMCPServers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	contract := fmt.Sprintf(`{"schema_version":1,"project":{"id":"wms","content_repository":"https://gitlab.example.invalid/1c/aisuz/ai.git","content_branch":"content-wms","database_repository":"https://gitlab.example.invalid/1c/fulfillment/wms.git","database_branch":"develop"},"toolchain":{"id":"cc_1c_skills","origin":"https://github.com/Nikolay-Shirokov/cc-1c-skills.git","commit":"e01688e764a3cf1c1b4a0ad5069ea885837cfb2e"},"provider":{"id":"customllm","name":"CustomLLM","base_url":"https://llm.example.invalid/v1","model":"generic-development","api_mode":"chat_completions","api_key_environment":"HERMES_CUSTOM_LLM_API_KEY"},"mcp_servers":[{"id":"v8std","endpoint":"https://ai.v8std.ru/mcp"},{"id":"customllm-jira","endpoint":"https://llm.example.invalid/jira/mcp","headers":{"x-litellm-api-key":"Bearer ${HERMES_CUSTOM_LLM_API_KEY}","x-mcp-jira-authorization":"Token ${HERMES_CUSTOM_ISSUE_TRACKER_TOKEN}"},"connect_timeout":60,"timeout":120,"sampling_enabled":false,"supports_parallel_tool_calls":false},{"id":"customllm-confluence","endpoint":"https://llm.example.invalid/confluence/mcp","headers":{"x-litellm-api-key":"Bearer ${HERMES_CUSTOM_LLM_API_KEY}","x-mcp-confluence-authorization":"Token ${HERMES_CUSTOM_KNOWLEDGE_BASE_TOKEN}"},"connect_timeout":60,"timeout":120,"sampling_enabled":false,"supports_parallel_tool_calls":false},{"id":"officecli","command":%s,"args":["mcp"],"asset":{"version":"1.0.144","commit":"1ced45e900782c5083ed550ddf328ee974e425e7","os":"linux","architecture":"amd64","file_name":"officecli-linux-x64","url":"https://github.com/iOfficeAI/OfficeCLI/releases/download/v1.0.144/officecli-linux-x64","size":35316133,"sha256":"32ef7a21a54a4ca6c9806bf5e9f3d32bfb1291017329c55044cb2aac71822eb8","update_policy":"auto_update_disabled_user_config","skill_refresh_policy":"existing_installed_only_best_effort"}}],"hermes":{"mode":"external-compatible","minimum_version":"0.20.1","maximum_exclusive_version":"0.21.0","observed_version":"0.20.1","certificate_sha256":"88d85e7e7d64c061c195f93c517500bdc91fccfb9b5a8115da9f6a5a17e689f8"}}`, command)
+	contract := fmt.Sprintf(`{"schema_version":1,"project":{"id":"wms","content_repository":"https://source.example.invalid/teamkit/repository.git","content_branch":"content-wms","database_repository":"https://source.example.invalid/teamkit/repository.git","database_branch":"develop"},"toolchain":{"id":"cc_1c_skills","origin":"https://github.com/Nikolay-Shirokov/cc-1c-skills.git","commit":"e01688e764a3cf1c1b4a0ad5069ea885837cfb2e"},"provider":{"id":"public-provider","name":"PublicProvider","base_url":"https://llm.example.invalid/v1","model":"public-development","api_mode":"chat_completions","api_key_environment":"TEAMKIT_PUBLIC_PROVIDER_API_KEY"},"mcp_servers":[{"id":"v8std","endpoint":"https://ai.v8std.ru/mcp"},{"id":"public-provider-issues","endpoint":"https://mcp.example.invalid/issues","headers":{"x-litellm-api-key":"Bearer ${TEAMKIT_PUBLIC_PROVIDER_API_KEY}","x-mcp-jira-authorization":"Token ${TEAMKIT_PUBLIC_ISSUES_KEY}"},"connect_timeout":60,"timeout":120,"sampling_enabled":false,"supports_parallel_tool_calls":false},{"id":"public-provider-wiki","endpoint":"https://mcp.example.invalid/wiki","headers":{"x-litellm-api-key":"Bearer ${TEAMKIT_PUBLIC_PROVIDER_API_KEY}","x-mcp-confluence-authorization":"Token ${TEAMKIT_PUBLIC_WIKI_KEY}"},"connect_timeout":60,"timeout":120,"sampling_enabled":false,"supports_parallel_tool_calls":false},{"id":"officecli","command":%s,"args":["mcp"],"asset":{"version":"1.0.144","commit":"1ced45e900782c5083ed550ddf328ee974e425e7","os":"linux","architecture":"amd64","file_name":"officecli-linux-x64","url":"https://github.com/iOfficeAI/OfficeCLI/releases/download/v1.0.144/officecli-linux-x64","size":35316133,"sha256":"32ef7a21a54a4ca6c9806bf5e9f3d32bfb1291017329c55044cb2aac71822eb8","update_policy":"auto_update_disabled_user_config","skill_refresh_policy":"existing_installed_only_best_effort"}}],"hermes":{"mode":"external-compatible","minimum_version":"0.20.1","maximum_exclusive_version":"0.21.0","observed_version":"0.20.1","certificate_sha256":"88d85e7e7d64c061c195f93c517500bdc91fccfb9b5a8115da9f6a5a17e689f8"}}`, command)
 	digest := sha256.Sum256([]byte(contract))
 	want := hex.EncodeToString(digest[:])
 	if got != want {
 		t.Fatalf("contract hash = %q, want %q", got, want)
 	}
-	firstThreeMCPServers := `[{"id":"v8std","endpoint":"https://ai.v8std.ru/mcp"},{"id":"customllm-jira","endpoint":"https://llm.example.invalid/jira/mcp","headers":{"x-litellm-api-key":"Bearer ${HERMES_CUSTOM_LLM_API_KEY}","x-mcp-jira-authorization":"Token ${HERMES_CUSTOM_ISSUE_TRACKER_TOKEN}"},"connect_timeout":60,"timeout":120,"sampling_enabled":false,"supports_parallel_tool_calls":false},{"id":"customllm-confluence","endpoint":"https://llm.example.invalid/confluence/mcp","headers":{"x-litellm-api-key":"Bearer ${HERMES_CUSTOM_LLM_API_KEY}","x-mcp-confluence-authorization":"Token ${HERMES_CUSTOM_KNOWLEDGE_BASE_TOKEN}"},"connect_timeout":60,"timeout":120,"sampling_enabled":false,"supports_parallel_tool_calls":false},`
+	firstThreeMCPServers := `[{"id":"v8std","endpoint":"https://ai.v8std.ru/mcp"},{"id":"public-provider-issues","endpoint":"https://mcp.example.invalid/issues","headers":{"x-litellm-api-key":"Bearer ${TEAMKIT_PUBLIC_PROVIDER_API_KEY}","x-mcp-jira-authorization":"Token ${TEAMKIT_PUBLIC_ISSUES_KEY}"},"connect_timeout":60,"timeout":120,"sampling_enabled":false,"supports_parallel_tool_calls":false},{"id":"public-provider-wiki","endpoint":"https://mcp.example.invalid/wiki","headers":{"x-litellm-api-key":"Bearer ${TEAMKIT_PUBLIC_PROVIDER_API_KEY}","x-mcp-confluence-authorization":"Token ${TEAMKIT_PUBLIC_WIKI_KEY}"},"connect_timeout":60,"timeout":120,"sampling_enabled":false,"supports_parallel_tool_calls":false},`
 	if !strings.Contains(contract, firstThreeMCPServers) {
 		t.Fatal("first three Hermes MCP contracts changed")
 	}
@@ -81,8 +81,8 @@ func TestDefaultOperationContract_HermesBindsOrderedMCPServers(t *testing.T) {
 		"args":                   strings.Replace(contract, `"args":["mcp"]`, `"args":["mcp","--verbose"]`, 1),
 		"update policy":          strings.Replace(contract, "auto_update_disabled_user_config", "auto_update_enabled_user_config", 1),
 		"skill refresh policy":   strings.Replace(contract, "existing_installed_only_best_effort", "never", 1),
-		"endpoint":               strings.Replace(contract, "https://llm.example.invalid/jira/mcp", "https://llm.example.invalid/jira/mcq", 1),
-		"header":                 strings.Replace(contract, "Token ${HERMES_CUSTOM_ISSUE_TRACKER_TOKEN}", "Token ${JIRA_TOKEO}", 1),
+		"endpoint":               strings.Replace(contract, "https://mcp.example.invalid/issues", "https://litellm.tools.publicorg.ru/jira/mcq", 1),
+		"header":                 strings.Replace(contract, "Token ${TEAMKIT_PUBLIC_ISSUES_KEY}", "Token ${JIRA_TOKEO}", 1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			mutatedDigest := sha256.Sum256([]byte(changed))
@@ -273,11 +273,11 @@ func TestService_ApplyAndUpdateUseFinalVerifiedHermesExecutableWithoutLateProbe(
 			runtimeCalls := 0
 			var captured EffectInputs
 			store := &recordingSecretStore{loaded: map[string]string{
-				credentials.GitLabUsername:  "runtime-binding-user",
-				credentials.GitLabToken:     "bind-token-canary",
-				credentials.CustomLLMAPIKey: "bind-secret-canary",
-				credentials.JiraToken:       "bind-jira-token-canary",
-				credentials.ConfluenceToken: "bind-confluence-token-canary",
+				credentials.GitLabUsername:   "runtime-binding-user",
+				credentials.GitLabToken:      "bind-token-canary",
+				credentials.PublicProviderAPIKey: "bind-secret-canary",
+				credentials.JiraToken:        "bind-jira-token-canary",
+				credentials.ConfluenceToken:  "bind-confluence-token-canary",
 			}}
 			svc := New(Options{
 				ResolveHermesRuntime: func(context.Context, domain.DesiredState) (hermes.DiscoveryResult, error) {
@@ -308,9 +308,9 @@ func TestService_ApplyAndUpdateUseFinalVerifiedHermesExecutableWithoutLateProbe(
 			var err error
 			if command == "apply" {
 				_, err = svc.Apply(context.Background(), desired, reconcile.UpdateNone, cli.ApplyInputs{Secrets: map[string]string{
-					credentials.CustomLLMAPIKey: "bind-secret-canary",
-					credentials.JiraToken:       "bind-jira-token-canary",
-					credentials.ConfluenceToken: "bind-confluence-token-canary",
+					credentials.PublicProviderAPIKey: "bind-secret-canary",
+					credentials.JiraToken:        "bind-jira-token-canary",
+					credentials.ConfluenceToken:  "bind-confluence-token-canary",
 				}})
 			} else {
 				_, err = svc.Update(context.Background(), root, reconcile.UpdateBoth)
@@ -437,7 +437,7 @@ func TestService_RetryRecoversPreparedHermesOperationAndBackfillsVersion(t *test
 			writeInterruptedCurrentOperation(t, public, bound, plan)
 
 			secretStore := &recordingSecretStore{loaded: map[string]string{
-				credentials.CustomLLMAPIKey: "provider-key", credentials.JiraToken: "jira-token", credentials.ConfluenceToken: "confluence-token",
+				credentials.PublicProviderAPIKey: "provider-key", credentials.JiraToken: "jira-token", credentials.ConfluenceToken: "confluence-token",
 			}}
 			var applied []reconcile.Action
 			runtimeCalls := 0
@@ -686,7 +686,7 @@ func TestDefaultOperationContract_NonHermesOmitsHermesAndProviderPins(t *testing
 		t.Fatalf("defaultOperationContract: %v", err)
 	}
 
-	contract := `{"schema_version":1,"project":{"id":"wms","content_repository":"https://gitlab.example.invalid/1c/aisuz/ai.git","content_branch":"content-wms","database_repository":"https://gitlab.example.invalid/1c/fulfillment/wms.git","database_branch":"develop"},"toolchain":{"id":"cc_1c_skills","origin":"https://github.com/Nikolay-Shirokov/cc-1c-skills.git","commit":"e01688e764a3cf1c1b4a0ad5069ea885837cfb2e"},"mcp":{"id":"v8std","endpoint":"https://ai.v8std.ru/mcp"}}`
+	contract := `{"schema_version":1,"project":{"id":"wms","content_repository":"https://source.example.invalid/teamkit/repository.git","content_branch":"content-wms","database_repository":"https://source.example.invalid/teamkit/repository.git","database_branch":"develop"},"toolchain":{"id":"cc_1c_skills","origin":"https://github.com/Nikolay-Shirokov/cc-1c-skills.git","commit":"e01688e764a3cf1c1b4a0ad5069ea885837cfb2e"},"mcp":{"id":"v8std","endpoint":"https://ai.v8std.ru/mcp"}}`
 	digest := sha256.Sum256([]byte(contract))
 	want := hex.EncodeToString(digest[:])
 	if got != want {
@@ -893,7 +893,7 @@ func TestService_RetryRejectsChangedOperationContract_LegacyRC2BeforePrivateAdap
 	}
 
 	store := &recordingSecretStore{loaded: map[string]string{
-		credentials.CustomLLMAPIKey: "provider-key", credentials.JiraToken: "jira-token", credentials.ConfluenceToken: "confluence-token",
+		credentials.PublicProviderAPIKey: "provider-key", credentials.JiraToken: "jira-token", credentials.ConfluenceToken: "confluence-token",
 	}}
 	downloads, privateCalls, runtimeCalls, writerCalls := 0, 0, 0, 0
 	svc := New(Options{
@@ -1428,7 +1428,7 @@ func TestLegacyRC2FailedToolchainShapeRejectsCheckpointAndDiagnosticTampering(t 
 
 func rc2FailedToolchainPlan() reconcile.OperationPlan {
 	return reconcile.OperationPlan{
-		ContractHash: "4756276de196b4f674e4719fdc934c9aff6f511634b35b7b53a8da54217a27a8",
+		ContractHash: "96429e164c3e8a6f8b9a82541ae6bb69ff16a4cde6cf5f33b95c6301bbc546f8",
 		Actions: []reconcile.Action{
 			{ID: "10-prepare-workspace", Kind: reconcile.ActionPrepareWorkspace, Idempotent: true},
 			{ID: "20-sync-content", Kind: reconcile.ActionSyncContent, Idempotent: true},

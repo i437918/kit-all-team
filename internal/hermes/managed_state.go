@@ -122,7 +122,7 @@ func validateManagedConfig(data []byte, schema int) error {
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		return fmt.Errorf("multiple YAML documents")
 	}
-	provider := CustomLLMProvider()
+	provider := PublicProviderProvider()
 	pinnedProvider, ok := config.Providers[provider.ID]
 	v8std, v8stdOK := config.MCPServers[catalog.V8StdMCP().ID]
 	officeCLI, officeCLIOK := config.MCPServers["officecli"]

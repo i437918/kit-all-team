@@ -40,7 +40,7 @@ func TestAuditRepository_FindsForbiddenTrackedPathAndDeletedHistorySecret(t *tes
 		t.Fatal("audit passed with a forbidden path and historical secret")
 	}
 	assertFinding(t, report, "tracked_paths", "forbidden_path")
-	assertFinding(t, report, "git_history", "gitlab_token")
+	assertFinding(t, report, "git_history", "source_access_token")
 	assertReportDoesNotReveal(t, report, secret)
 }
 
@@ -74,7 +74,7 @@ func TestAuditRepository_ScansReachableCommitAndAnnotatedTagMessages(t *testing.
 	if report.Passed {
 		t.Fatal("audit skipped secrets in reachable commit and annotated tag messages")
 	}
-	assertFinding(t, report, "git_history", "gitlab_token")
+	assertFinding(t, report, "git_history", "source_access_token")
 	assertFinding(t, report, "git_history", "github_token")
 	assertReportDoesNotReveal(t, report, commitSecret)
 	assertReportDoesNotReveal(t, report, tagSecret)
@@ -237,7 +237,7 @@ func TestAuditRepository_ReleaseHistoryScopeIgnoresUnrelatedRefs(t *testing.T) {
 	if defaultReport.HistoryScope != "all_refs" {
 		t.Fatalf("repository-wide audit reported history scope %q", defaultReport.HistoryScope)
 	}
-	assertFinding(t, defaultReport, "git_history", "gitlab_token")
+	assertFinding(t, defaultReport, "git_history", "source_access_token")
 
 	first, err := Audit(context.Background(), Options{Repository: firstRoot, Commit: commit, HistoryRef: commit})
 	if err != nil {
@@ -294,7 +294,7 @@ func TestAuditCleanInputs_EmitsDeterministicMachineReadableEvidence(t *testing.T
 
 func TestAuditArtifacts_DoesNotTreatEnvironmentVariableNamesAsSecretValues(t *testing.T) {
 	root := testutil.TempDir(t)
-	writeFile(t, filepath.Join(root, "source.go"), `const CustomLLMAPIKey = "HERMES_CUSTOM_LLM_API_KEY"`)
+	writeFile(t, filepath.Join(root, "source.go"), `const PublicProviderAPIKey = "TEAMKIT_PUBLIC_PROVIDER_API_KEY"`)
 
 	report, err := Audit(context.Background(), Options{Paths: []string{root}})
 	if err != nil {
@@ -489,4 +489,108 @@ func writeTarGz(t *testing.T, path, name, contents string) {
 		t.Fatal(err)
 	}
 	writeFile(t, path, buffer.String())
+}
+
+func TestAuditArtifacts_RecordsEmbeddedIdentityForAllCandidates(t *testing.T) {
+	root := testutil.TempDir(t)
+	commit := strings.Repeat("a", 40)
+	fixture := buildIdentityFixture(t, root, "v0.1.5", commit)
+	for _, name := range releaseCandidateBinaryNames {
+		data, err := os.ReadFile(fixture)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, name), data, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	report, err := Audit(context.Background(), Options{Paths: []string{root}, Commit: commit})
+	if err != nil {
+		t.Fatalf("Audit: %v", err)
+	}
+	if !report.Passed {
+		t.Fatalf("audit rejected matching candidates: %#v", report.Findings)
+	}
+	if len(report.Binaries) != len(releaseCandidateBinaryNames) {
+		t.Fatalf("candidate identity count = %d, want %d", len(report.Binaries), len(releaseCandidateBinaryNames))
+	}
+	for _, identity := range report.Binaries {
+		if identity.SHA256 == "" || identity.Version != "v0.1.5" || identity.Commit != commit {
+			t.Fatalf("unexpected candidate identity: %#v", identity)
+		}
+	}
+}
+
+func TestAuditArtifacts_RejectsMismatchedEmbeddedIdentity(t *testing.T) {
+	root := testutil.TempDir(t)
+	commit := strings.Repeat("a", 40)
+	matchingFixture := buildIdentityFixture(t, root, "v0.1.5", commit)
+	mismatchedFixture := buildIdentityFixture(t, root, "v0.1.5", strings.Repeat("b", 40))
+	for index, name := range releaseCandidateBinaryNames {
+		fixture := matchingFixture
+		if index == 0 {
+			fixture = mismatchedFixture
+		}
+		if err := os.WriteFile(filepath.Join(root, name), mustReadFile(t, fixture), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	report, err := Audit(context.Background(), Options{Paths: []string{root}, Commit: commit})
+	if err != nil {
+		t.Fatalf("Audit: %v", err)
+	}
+	if report.Passed {
+		t.Fatal("audit accepted a candidate whose embedded commit differs from the canonical revision")
+	}
+	assertFinding(t, report, "candidate_identity", "embedded_commit")
+}
+
+func buildIdentityFixture(t *testing.T, directory, version, commit string) string {
+	t.Helper()
+	root := filepath.Clean(filepath.Join("..", ".."))
+	fixture := filepath.Join(directory, "teamkit-fixture")
+	command := exec.Command("go", "build", "-buildvcs=false", "-ldflags", "-X github.com/mi1man-cmd/kit-all-team/internal/buildinfo.version="+version+" -X github.com/mi1man-cmd/kit-all-team/internal/buildinfo.commit="+commit, "-o", fixture, "./cmd/teamkit")
+	command.Dir = root
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("build identity fixture: %v\n%s", err, output)
+	}
+	return fixture
+}
+
+func mustReadFile(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+func TestAuditRepository_PublicHistoryRecordsDistinctCanonicalIdentity(t *testing.T) {
+	root := newGitRepository(t)
+	publicRevision := gitOutput(t, root, "rev-parse", "HEAD")
+	canonicalRevision := strings.Repeat("c", 40)
+	if canonicalRevision == publicRevision {
+		t.Fatal("fixture must exercise two distinct revisions")
+	}
+
+	report, err := Audit(context.Background(), Options{
+		Repository: root,
+		Commit:     canonicalRevision,
+		HistoryRef: publicRevision,
+	})
+	if err != nil {
+		t.Fatalf("Audit two-SHA candidate: %v", err)
+	}
+	if !report.Passed {
+		t.Fatalf("two-SHA candidate audit failed: %#v", report.Findings)
+	}
+	if report.Commit != canonicalRevision {
+		t.Fatalf("canonical commit = %q, want %q", report.Commit, canonicalRevision)
+	}
+	if report.HistoryRevision != publicRevision {
+		t.Fatalf("audited public history revision = %q, want %q", report.HistoryRevision, publicRevision)
+	}
 }

@@ -398,7 +398,7 @@ func CertificateEnvironmentReady(path, bundle string) (bool, error) {
 			return false, nil
 		}
 	}
-	if strings.TrimSpace(values[CustomLLMProvider().APIKeyEnvironment]) == "" {
+	if strings.TrimSpace(values[PublicProviderProvider().APIKeyEnvironment]) == "" {
 		return false, nil
 	}
 	return true, nil

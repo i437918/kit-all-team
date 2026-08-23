@@ -10,8 +10,22 @@ if [[ -n $(git status --porcelain --untracked-files=all) ]]; then
   printf 'SOURCE_TREE_DIRTY\n' >&2
   exit 1
 fi
-COMMIT=$(git -C "$REPOSITORY_ROOT" rev-parse HEAD)
-BUILD_DATE=$(git -C "$REPOSITORY_ROOT" show -s --format=%cI "$COMMIT")
+SOURCE_REVISION=${TEAMKIT_SOURCE_REVISION:-}
+SOURCE_COMMIT_TIME=${TEAMKIT_SOURCE_COMMIT_TIME:-}
+if [[ -n $SOURCE_REVISION || -n $SOURCE_COMMIT_TIME ]]; then
+  if [[ -z $SOURCE_REVISION || -z $SOURCE_COMMIT_TIME ]] ||
+    ! [[ $SOURCE_REVISION =~ ^[0-9a-f]{40}$ ]] ||
+    ! [[ $SOURCE_COMMIT_TIME =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$ ]] ||
+    ! date --date="$SOURCE_COMMIT_TIME" --iso-8601=seconds >/dev/null; then
+    printf 'SOURCE_IDENTITY_INVALID\n' >&2
+    exit 1
+  fi
+  COMMIT=$SOURCE_REVISION
+  BUILD_DATE=$SOURCE_COMMIT_TIME
+else
+  COMMIT=$(git -C "$REPOSITORY_ROOT" rev-parse HEAD)
+  BUILD_DATE=$(git -C "$REPOSITORY_ROOT" show -s --format=%cI "$COMMIT")
+fi
 
 mkdir -p "$DESTINATION"
 export CGO_ENABLED=0

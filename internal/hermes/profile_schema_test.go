@@ -16,7 +16,7 @@ func TestRenderForSchema_UsesProvenSchemaWithoutChangingManagedState(t *testing.
 		Toolchain:     Toolchain{Name: "cc_1c_skills", Origin: "schema-secret-value", Version: "pin"},
 		V8StdEndpoint: "https://ai.v8std.ru/mcp",
 	}
-	provider := CustomLLMProvider()
+	provider := PublicProviderProvider()
 	configs := make(map[int]map[string]any, 2)
 	officeCLICommand := filepath.Join(t.TempDir(), officeCLIManagedNameForTest())
 	profileWithOfficeCLI, err := profile.WithOfficeCLI(officeCLICommand)
@@ -51,7 +51,7 @@ func TestRenderForSchema_UsesProvenSchemaWithoutChangingManagedState(t *testing.
 		}
 		baseMCPs := config["mcp_servers"].(map[string]any)
 		officeCLIMCPs := officeCLIConfig["mcp_servers"].(map[string]any)
-		for _, id := range []string{"v8std", "customllm-jira", "customllm-confluence"} {
+		for _, id := range []string{"v8std", "public-provider-issues", "public-provider-wiki"} {
 			if !reflect.DeepEqual(baseMCPs[id], officeCLIMCPs[id]) {
 				t.Fatalf("schema %d %s changed after adding OfficeCLI:\nwithout=%#v\nwith=%#v", schema, id, baseMCPs[id], officeCLIMCPs[id])
 			}
@@ -69,7 +69,7 @@ func TestRenderForSchema_RejectsUnprovenSchema(t *testing.T) {
 		V8StdEndpoint: "https://ai.v8std.ru/mcp",
 	}
 	for _, schema := range []int{33, 38} {
-		data, err := profile.RenderForSchema(CustomLLMProvider(), schema)
+		data, err := profile.RenderForSchema(PublicProviderProvider(), schema)
 		if !errors.Is(err, ErrConfigSchemaUnsupported) || data != nil {
 			t.Fatalf("RenderForSchema(schema=%d) = %q, %v; want nil ErrConfigSchemaUnsupported", schema, data, err)
 		}
