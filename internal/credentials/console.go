@@ -81,9 +81,9 @@ func displayCredentialLabel(label string) string {
 	case GitLabUsername:
 		return "Логин GitLab (GITLAB_USERNAME)"
 	case GitLabToken:
-		return "Токен GitLab (GITLAB_TOKEN)"
-	case CustomLLMAPIKey:
-		return "Ключ CustomLLM (HERMES_CUSTOM_LLM_API_KEY)"
+		return "Токен GitLab (TEAMKIT_SOURCE_TOKEN)"
+	case PublicProviderAPIKey:
+		return "Ключ PublicProvider (TEAMKIT_PUBLIC_PROVIDER_API_KEY)"
 	case JiraToken:
 		return "Jira personal token"
 	case ConfluenceToken:
