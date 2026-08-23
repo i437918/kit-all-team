@@ -17,7 +17,7 @@ func TestCertificateEnvironmentReady_RejectsBroadPOSIXPermissions(t *testing.T) 
 		t.Fatal(err)
 	}
 	values := ApplicationCAEnvironment(bundle)
-	values[CustomLLMProvider().APIKeyEnvironment] = "provider-test-value"
+	values[PublicProviderProvider().APIKeyEnvironment] = "provider-test-value"
 	var lines []string
 	for key, value := range values {
 		lines = append(lines, key+"="+value)

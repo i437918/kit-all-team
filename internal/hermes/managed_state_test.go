@@ -33,13 +33,13 @@ func TestVerifyManagedProfile_RejectsManagedInvariantDrift(t *testing.T) {
 			writeManagedFile(t, filepath.Join(f.root, "config.yaml"), strings.Replace(string(f.config), "_config_version: 34", "_config_version: 37", 1))
 		},
 		"provider-model": func(t *testing.T, f *managedProfileFixture) {
-			writeManagedFile(t, filepath.Join(f.root, "config.yaml"), strings.ReplaceAll(string(f.config), "generic-development", "wrong-model"))
+			writeManagedFile(t, filepath.Join(f.root, "config.yaml"), strings.ReplaceAll(string(f.config), "public-development", "wrong-model"))
 		},
 		"v8std": func(t *testing.T, f *managedProfileFixture) {
 			writeManagedFile(t, filepath.Join(f.root, "config.yaml"), strings.Replace(string(f.config), "https://ai.v8std.ru/mcp", "https://wrong.invalid/mcp", 1))
 		},
 		"jira": func(t *testing.T, f *managedProfileFixture) {
-			writeManagedFile(t, filepath.Join(f.root, "config.yaml"), strings.Replace(string(f.config), "Token ${HERMES_CUSTOM_ISSUE_TRACKER_TOKEN}", "Token wrong", 1))
+			writeManagedFile(t, filepath.Join(f.root, "config.yaml"), strings.Replace(string(f.config), "Token ${TEAMKIT_PUBLIC_ISSUES_KEY}", "Token wrong", 1))
 		},
 		"workspace": func(t *testing.T, f *managedProfileFixture) {
 			writeManagedFile(t, filepath.Join(f.root, "config.yaml"), strings.Replace(string(f.config), f.workspace, filepath.Join(filepath.Dir(f.workspace), "other"), 1))
@@ -97,7 +97,7 @@ func TestManagedConfig_RequiresOfficeCLI(t *testing.T) {
 		Toolchain:     Toolchain{Name: "cc_1c_skills", Origin: "pin", Version: "pin"},
 		V8StdEndpoint: catalog.V8StdMCP().Endpoint,
 	}
-	legacy, err := legacyProfile.RenderForSchema(CustomLLMProvider(), HermesConfigVersion)
+	legacy, err := legacyProfile.RenderForSchema(PublicProviderProvider(), HermesConfigVersion)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestManagedConfig_RequiresOfficeCLI(t *testing.T) {
 	withExtra := managedConfig(t, fixture.config)
 	withExtra.MCPServers["unexpected"] = mcpYAML{URL: "https://example.invalid/mcp", Enabled: true}
 	requireManagedConfigRejected(t, withExtra)
-	for _, id := range []string{"officecli", "v8std", "customllm-jira", "customllm-confluence"} {
+	for _, id := range []string{"officecli", "v8std", "public-provider-issues", "public-provider-wiki"} {
 		t.Run("missing/"+id, func(t *testing.T) {
 			missing := managedConfig(t, fixture.config)
 			delete(missing.MCPServers, id)
@@ -145,12 +145,12 @@ func TestManagedConfig_RejectsExplicitForbiddenMCPFields(t *testing.T) {
 		{name: "v8std/args-null", mcpID: "v8std", field: "args", value: yamlScalar("!!null", "null")},
 		{name: "v8std/env-empty", mcpID: "v8std", field: "env", value: yamlEmptyMapping()},
 		{name: "v8std/env-null", mcpID: "v8std", field: "env", value: yamlScalar("!!null", "null")},
-		{name: "jira/command-empty", mcpID: "customllm-jira", field: "command", value: yamlScalar("!!str", "")},
-		{name: "jira/args-empty", mcpID: "customllm-jira", field: "args", value: yamlEmptySequence()},
-		{name: "jira/env-empty", mcpID: "customllm-jira", field: "env", value: yamlEmptyMapping()},
-		{name: "confluence/command-null", mcpID: "customllm-confluence", field: "command", value: yamlScalar("!!null", "null")},
-		{name: "confluence/args-null", mcpID: "customllm-confluence", field: "args", value: yamlScalar("!!null", "null")},
-		{name: "confluence/env-null", mcpID: "customllm-confluence", field: "env", value: yamlScalar("!!null", "null")},
+		{name: "jira/command-empty", mcpID: "public-provider-issues", field: "command", value: yamlScalar("!!str", "")},
+		{name: "jira/args-empty", mcpID: "public-provider-issues", field: "args", value: yamlEmptySequence()},
+		{name: "jira/env-empty", mcpID: "public-provider-issues", field: "env", value: yamlEmptyMapping()},
+		{name: "confluence/command-null", mcpID: "public-provider-wiki", field: "command", value: yamlScalar("!!null", "null")},
+		{name: "confluence/args-null", mcpID: "public-provider-wiki", field: "args", value: yamlScalar("!!null", "null")},
+		{name: "confluence/env-null", mcpID: "public-provider-wiki", field: "env", value: yamlScalar("!!null", "null")},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			data := withRawMCPField(t, fixture.config, test.mcpID, test.field, test.value)
@@ -228,7 +228,7 @@ func TestManagedConfig_RejectsOfficeCLITransportDrift(t *testing.T) {
 
 func TestManagedConfig_RejectsRemoteStdioTransport(t *testing.T) {
 	fixture := newManagedProfileFixture(t)
-	for _, id := range []string{"v8std", "customllm-jira", "customllm-confluence"} {
+	for _, id := range []string{"v8std", "public-provider-issues", "public-provider-wiki"} {
 		for _, mutation := range []struct {
 			name  string
 			apply func(*mcpYAML)
@@ -250,7 +250,7 @@ func TestManagedConfig_RejectsRemoteStdioTransport(t *testing.T) {
 
 func TestManagedConfig_RejectsRemoteMCPContractDrift(t *testing.T) {
 	fixture := newManagedProfileFixture(t)
-	for _, id := range []string{"customllm-jira", "customllm-confluence"} {
+	for _, id := range []string{"public-provider-issues", "public-provider-wiki"} {
 		for _, mutation := range []struct {
 			name  string
 			apply func(*mcpYAML)
@@ -275,7 +275,7 @@ func TestManagedConfig_RejectsRemoteMCPContractDrift(t *testing.T) {
 
 func TestValidateManagedConfig_RejectsDisabledAtlassianMCP(t *testing.T) {
 	fixture := newManagedProfileFixture(t)
-	for _, mcpID := range []string{"customllm-jira", "customllm-confluence"} {
+	for _, mcpID := range []string{"public-provider-issues", "public-provider-wiki"} {
 		t.Run(mcpID, func(t *testing.T) {
 			config := managedConfig(t, fixture.config)
 			mcp := config.MCPServers[mcpID]
@@ -320,7 +320,7 @@ func newManagedProfileFixture(t *testing.T) *managedProfileFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	config, err := profile.RenderForSchema(CustomLLMProvider(), 34)
+	config, err := profile.RenderForSchema(PublicProviderProvider(), 34)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -336,7 +336,7 @@ func newManagedProfileFixture(t *testing.T) *managedProfileFixture {
 	}
 	writeManagedFile(t, filepath.Join(root, "config.yaml"), string(config))
 	environment := filepath.Join(root, ".env")
-	if err := privatefile.WriteAtomic(environment, []byte(CustomLLMProvider().APIKeyEnvironment+"=test-value\n"), 0o600); err != nil {
+	if err := privatefile.WriteAtomic(environment, []byte(PublicProviderProvider().APIKeyEnvironment+"=test-value\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	identity := filepath.Base(root)

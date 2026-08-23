@@ -154,7 +154,7 @@ func TestRunApplyNeverAcceptsSecretFlagsAndRedactsServiceError(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	runner := Runner{
 		Service: service, Credentials: fixedCredentials{
-			"GITLAB_TOKEN": gitLabCanary, "HERMES_CUSTOM_ISSUE_TRACKER_TOKEN": jiraCanary, "HERMES_CUSTOM_KNOWLEDGE_BASE_TOKEN": confluenceCanary,
+			"TEAMKIT_SOURCE_TOKEN": gitLabCanary, "TEAMKIT_PUBLIC_ISSUES_KEY": jiraCanary, "TEAMKIT_PUBLIC_WIKI_KEY": confluenceCanary,
 		},
 		In: strings.NewReader(""), Out: &stdout, Err: &stderr,
 	}
@@ -177,7 +177,7 @@ func TestRunApplyNeverAcceptsSecretFlagsAndRedactsServiceError(t *testing.T) {
 			}
 		})
 	}
-	if service.secrets["GITLAB_TOKEN"] != gitLabCanary || service.secrets["HERMES_CUSTOM_ISSUE_TRACKER_TOKEN"] != jiraCanary || service.secrets["HERMES_CUSTOM_KNOWLEDGE_BASE_TOKEN"] != confluenceCanary {
+	if service.secrets["TEAMKIT_SOURCE_TOKEN"] != gitLabCanary || service.secrets["TEAMKIT_PUBLIC_ISSUES_KEY"] != jiraCanary || service.secrets["TEAMKIT_PUBLIC_WIKI_KEY"] != confluenceCanary {
 		t.Fatalf("credential source was not passed to service: %#v", service.secrets)
 	}
 
@@ -415,7 +415,7 @@ func TestRunApplyNoOpDoesNotResolveCredentialsOrApply(t *testing.T) {
 func TestRunApplyPrintsSecretFreeAlternativeApplicationHandoff(t *testing.T) {
 	service := &fakeService{hasPlan: true, plan: reconcile.OperationPlan{Actions: []reconcile.Action{{Kind: reconcile.ActionConfigureApplication}}}}
 	var stdout, stderr bytes.Buffer
-	runner := Runner{Service: service, Credentials: fixedCredentials{"GITLAB_TOKEN": "TEAMKIT_HANDOFF_CANARY"}, In: strings.NewReader(""), Out: &stdout, Err: &stderr}
+	runner := Runner{Service: service, Credentials: fixedCredentials{"TEAMKIT_SOURCE_TOKEN": "TEAMKIT_HANDOFF_CANARY"}, In: strings.NewReader(""), Out: &stdout, Err: &stderr}
 	args := []string{
 		"apply", "--non-interactive", "--os", "linux", "--app", "codex", "--app-installed=true",
 		"--kit-home", "/tmp/kit", "--project", "wms", "--role", "developer", "--toolchain", "cc_1c_skills",

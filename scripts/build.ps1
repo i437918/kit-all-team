@@ -14,8 +14,24 @@ try {
     $Dirty = & git status --porcelain --untracked-files=all
     if ($LASTEXITCODE -ne 0) { throw "git status failed" }
     if ($Dirty) { throw "SOURCE_TREE_DIRTY" }
-    $Commit = (& git rev-parse HEAD).Trim()
-    $BuildDate = (& git show -s --format=%cI $Commit).Trim()
+    $SourceRevision = [Environment]::GetEnvironmentVariable("TEAMKIT_SOURCE_REVISION")
+    $SourceCommitTime = [Environment]::GetEnvironmentVariable("TEAMKIT_SOURCE_COMMIT_TIME")
+    if (-not [string]::IsNullOrEmpty($SourceRevision) -or -not [string]::IsNullOrEmpty($SourceCommitTime)) {
+        if ([string]::IsNullOrEmpty($SourceRevision) -or [string]::IsNullOrEmpty($SourceCommitTime) -or $SourceRevision -notcmatch "^[0-9a-f]{40}$") {
+            throw "SOURCE_IDENTITY_INVALID"
+        }
+        [DateTimeOffset]$ParsedCommitTime = [DateTimeOffset]::MinValue
+        $CommitTimeFormats = @("yyyy-MM-dd'T'HH:mm:ssK", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFFK")
+        if (-not [DateTimeOffset]::TryParseExact($SourceCommitTime, $CommitTimeFormats, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$ParsedCommitTime)) {
+            throw "SOURCE_IDENTITY_INVALID"
+        }
+        $Commit = $SourceRevision
+        $BuildDate = $SourceCommitTime
+    }
+    else {
+        $Commit = (& git rev-parse HEAD).Trim()
+        $BuildDate = (& git show -s --format=%cI $Commit).Trim()
+    }
 
     New-Item -ItemType Directory -Path $Destination -Force | Out-Null
     $env:CGO_ENABLED = "0"

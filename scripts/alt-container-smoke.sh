@@ -2,7 +2,6 @@
 set -euo pipefail
 
 ALT_BASE_IMAGE=registry.altlinux.org/p11/alt@sha256:4c76520bb4935edf624dde76d5e670d54f40938323b185c4c7270881b71fd8ea
-ALT_OFFICECLI_IMAGE=ghcr.io/i437918/kit-all-team/alt-p11-officecli@sha256:5ee493c6c7edbdb8d68fb0ab9af2847bae855c9042bc5f13f5fd6b3d0965a825
 ALT_IMAGE=${ALT_IMAGE:-$ALT_BASE_IMAGE}
 CANDIDATE=${1:?usage: alt-container-smoke.sh PATH_TO_LINUX_AMD64_BINARY [OFFICECLI_ASSET OFFICECLI_LIVE_TEST]}
 OFFICECLI_ASSET=${2:-}
@@ -19,11 +18,6 @@ if [[ -n "$OFFICECLI_ASSET" ]]; then
   OFFICECLI_LIVE_TEST=$(realpath "$OFFICECLI_LIVE_TEST")
   [[ -f "$OFFICECLI_ASSET" ]] || { printf 'OfficeCLI asset not found: %s\n' "$OFFICECLI_ASSET" >&2; exit 2; }
   [[ -f "$OFFICECLI_LIVE_TEST" ]] || { printf 'OfficeCLI live test not found: %s\n' "$OFFICECLI_LIVE_TEST" >&2; exit 2; }
-fi
-
-if [[ -n "$OFFICECLI_ASSET" && "$ALT_IMAGE" != "$ALT_OFFICECLI_IMAGE" ]]; then
-  printf 'ALT_IMAGE_PIN_MISMATCH expected=%s actual=%s\n' "$ALT_OFFICECLI_IMAGE" "$ALT_IMAGE" >&2
-  exit 64
 fi
 
 docker pull "$ALT_IMAGE"

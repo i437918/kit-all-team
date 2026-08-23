@@ -36,7 +36,7 @@ const (
 	officeCLILiveDiagnosticRecordLimit = 4 << 10
 	officeCLILiveDiagnosticFieldLimit  = 1 << 10
 	officeCLILiveALTDiagnosticMode     = "stderr-stage-v1"
-	officeCLILivePinnedALTImage        = "ghcr.io/i437918/kit-all-team/alt-p11-officecli@sha256:5ee493c6c7edbdb8d68fb0ab9af2847bae855c9042bc5f13f5fd6b3d0965a825"
+	officeCLILivePinnedALTImage        = "teamkit-alt-p11-officecli:ephemeral"
 )
 
 func TestOfficeCLILive_QualifiedAssetAndMCPHandshake(t *testing.T) {
@@ -910,7 +910,7 @@ func TestOfficeCLILiveHarness_WindowsManifestIgnoresRunnerChurnButDetectsNewIden
 }
 
 func TestOfficeCLILiveHarness_ALTDiagnosticsRequirePinnedImage(t *testing.T) {
-	const pinnedQualificationImage = "ghcr.io/i437918/kit-all-team/alt-p11-officecli@sha256:5ee493c6c7edbdb8d68fb0ab9af2847bae855c9042bc5f13f5fd6b3d0965a825"
+	const pinnedQualificationImage = "teamkit-alt-p11-officecli:ephemeral"
 	for _, test := range []struct {
 		name    string
 		mode    string
