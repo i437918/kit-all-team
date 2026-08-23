@@ -11,17 +11,17 @@ import (
 
 func TestProjects_ReturnsClosedRepositoryBindings(t *testing.T) {
 	want := []catalog.Project{
-		{ID: domain.ProjectAISUZ, ContentRepository: "https://gitlab.example.invalid/1c/aisuz/ai.git", ContentBranch: "content-aisuz", DatabaseRepository: "https://gitlab.example.invalid/1c/aisuz/main.git", DatabaseBranch: "develop"},
-		{ID: domain.ProjectAPA, ContentRepository: "https://gitlab.example.invalid/1c/aisuz/ai.git", ContentBranch: "content-apa", DatabaseRepository: "https://gitlab.example.invalid/1c/apa/main.git", DatabaseBranch: "develop"},
-		{ID: domain.ProjectASBNU, ContentRepository: "https://gitlab.example.invalid/1c/aisuz/ai.git", ContentBranch: "content-asbnu", DatabaseRepository: "https://gitlab.example.invalid/1c/asbnu/asbnu3.git", DatabaseBranch: "develop"},
-		{ID: domain.ProjectASKU, ContentRepository: "https://gitlab.example.invalid/1c/aisuz/ai.git", ContentBranch: "content-asku", DatabaseRepository: "https://gitlab.example.invalid/1c/asku/main.git", DatabaseBranch: "develop"},
-		{ID: domain.ProjectEASR, ContentRepository: "https://gitlab.example.invalid/1c/aisuz/ai.git", ContentBranch: "content-easr", DatabaseRepository: "https://gitlab.example.invalid/1c/easr/main.git", DatabaseBranch: "develop"},
-		{ID: domain.ProjectEISKO, ContentRepository: "https://gitlab.example.invalid/1c/aisuz/ai.git", ContentBranch: "content-eisko", DatabaseRepository: "https://gitlab.example.invalid/1c/eisko/eisko1.git", DatabaseBranch: "develop"},
-		{ID: domain.ProjectESED, ContentRepository: "https://gitlab.example.invalid/1c/aisuz/ai.git", ContentBranch: "content-esed", DatabaseRepository: "https://gitlab.example.invalid/1c/esed/main.git", DatabaseBranch: "develop"},
-		{ID: domain.ProjectUAT, ContentRepository: "https://gitlab.example.invalid/1c/aisuz/ai.git", ContentBranch: "content-uat", DatabaseRepository: "https://gitlab.example.invalid/1c/uat/main.git", DatabaseBranch: "develop"},
-		{ID: domain.ProjectUNIP, ContentRepository: "https://gitlab.example.invalid/1c/aisuz/ai.git", ContentBranch: "content-unip", DatabaseRepository: "https://gitlab.example.invalid/1c/unip/main.git", DatabaseBranch: "develop"},
-		{ID: domain.ProjectZUP, ContentRepository: "https://gitlab.example.invalid/1c/aisuz/ai.git", ContentBranch: "content-zup", DatabaseRepository: "https://gitlab.example.invalid/1c/zup/zup3.git", DatabaseBranch: "develop"},
-		{ID: domain.ProjectWMS, ContentRepository: "https://gitlab.example.invalid/1c/aisuz/ai.git", ContentBranch: "content-wms", DatabaseRepository: "https://gitlab.example.invalid/1c/fulfillment/wms.git", DatabaseBranch: "develop"},
+		{ID: domain.ProjectAISUZ, ContentRepository: "https://source.example.invalid/teamkit/repository.git", ContentBranch: "content-aisuz", DatabaseRepository: "https://source.example.invalid/teamkit/repository.git", DatabaseBranch: "develop"},
+		{ID: domain.ProjectAPA, ContentRepository: "https://source.example.invalid/teamkit/repository.git", ContentBranch: "content-apa", DatabaseRepository: "https://source.example.invalid/teamkit/repository.git", DatabaseBranch: "develop"},
+		{ID: domain.ProjectASBNU, ContentRepository: "https://source.example.invalid/teamkit/repository.git", ContentBranch: "content-asbnu", DatabaseRepository: "https://source.example.invalid/teamkit/repository.git", DatabaseBranch: "develop"},
+		{ID: domain.ProjectASKU, ContentRepository: "https://source.example.invalid/teamkit/repository.git", ContentBranch: "content-asku", DatabaseRepository: "https://source.example.invalid/teamkit/repository.git", DatabaseBranch: "develop"},
+		{ID: domain.ProjectEASR, ContentRepository: "https://source.example.invalid/teamkit/repository.git", ContentBranch: "content-easr", DatabaseRepository: "https://source.example.invalid/teamkit/repository.git", DatabaseBranch: "develop"},
+		{ID: domain.ProjectEISKO, ContentRepository: "https://source.example.invalid/teamkit/repository.git", ContentBranch: "content-eisko", DatabaseRepository: "https://source.example.invalid/teamkit/repository.git", DatabaseBranch: "develop"},
+		{ID: domain.ProjectESED, ContentRepository: "https://source.example.invalid/teamkit/repository.git", ContentBranch: "content-esed", DatabaseRepository: "https://source.example.invalid/teamkit/repository.git", DatabaseBranch: "develop"},
+		{ID: domain.ProjectUAT, ContentRepository: "https://source.example.invalid/teamkit/repository.git", ContentBranch: "content-uat", DatabaseRepository: "https://source.example.invalid/teamkit/repository.git", DatabaseBranch: "develop"},
+		{ID: domain.ProjectUNIP, ContentRepository: "https://source.example.invalid/teamkit/repository.git", ContentBranch: "content-unip", DatabaseRepository: "https://source.example.invalid/teamkit/repository.git", DatabaseBranch: "develop"},
+		{ID: domain.ProjectZUP, ContentRepository: "https://source.example.invalid/teamkit/repository.git", ContentBranch: "content-zup", DatabaseRepository: "https://source.example.invalid/teamkit/repository.git", DatabaseBranch: "develop"},
+		{ID: domain.ProjectWMS, ContentRepository: "https://source.example.invalid/teamkit/repository.git", ContentBranch: "content-wms", DatabaseRepository: "https://source.example.invalid/teamkit/repository.git", DatabaseBranch: "develop"},
 	}
 	if got := catalog.Projects(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Projects() = %#v, want %#v", got, want)
@@ -75,8 +75,8 @@ func TestCatalog_ReturnsClosedSelectionsAndPins(t *testing.T) {
 
 func TestCatalog_ReturnsExactProviderAndMCPValues(t *testing.T) {
 	if got, want := catalog.DefaultProvider(), (catalog.Provider{
-		ID: "customllm", Name: "CustomLLM", BaseURL: "https://llm.example.invalid/v1",
-		Model: "generic-development", APIMode: "chat_completions", APIKeyEnvironment: "HERMES_CUSTOM_LLM_API_KEY",
+		ID: "public-provider", Name: "PublicProvider", BaseURL: "https://llm.example.invalid/v1",
+		Model: "public-development", APIMode: "chat_completions", APIKeyEnvironment: "TEAMKIT_PUBLIC_PROVIDER_API_KEY",
 	}); got != want {
 		t.Fatalf("DefaultProvider() = %#v, want %#v", got, want)
 	}
@@ -87,14 +87,14 @@ func TestCatalog_ReturnsExactProviderAndMCPValues(t *testing.T) {
 	}
 }
 
-func TestAtlassianMCPs_ExactCorporateContractAndDefensiveHeaders(t *testing.T) {
+func TestAtlassianMCPs_ExactPublicContractAndDefensiveHeaders(t *testing.T) {
 	got := catalog.AtlassianMCPs()
 	if len(got) != 2 {
 		t.Fatalf("len = %d, want 2", len(got))
 	}
 	want := []catalog.MCP{
-		{ID: "customllm-jira", Endpoint: "https://llm.example.invalid/jira/mcp", Headers: map[string]string{"x-litellm-api-key": "Bearer ${HERMES_CUSTOM_LLM_API_KEY}", "x-mcp-jira-authorization": "Token ${HERMES_CUSTOM_ISSUE_TRACKER_TOKEN}"}, ConnectTimeout: 60, Timeout: 120},
-		{ID: "customllm-confluence", Endpoint: "https://llm.example.invalid/confluence/mcp", Headers: map[string]string{"x-litellm-api-key": "Bearer ${HERMES_CUSTOM_LLM_API_KEY}", "x-mcp-confluence-authorization": "Token ${HERMES_CUSTOM_KNOWLEDGE_BASE_TOKEN}"}, ConnectTimeout: 60, Timeout: 120},
+		{ID: "public-provider-issues", Endpoint: "https://mcp.example.invalid/issues", Headers: map[string]string{"x-litellm-api-key": "Bearer ${TEAMKIT_PUBLIC_PROVIDER_API_KEY}", "x-mcp-jira-authorization": "Token ${TEAMKIT_PUBLIC_ISSUES_KEY}"}, ConnectTimeout: 60, Timeout: 120},
+		{ID: "public-provider-wiki", Endpoint: "https://mcp.example.invalid/wiki", Headers: map[string]string{"x-litellm-api-key": "Bearer ${TEAMKIT_PUBLIC_PROVIDER_API_KEY}", "x-mcp-confluence-authorization": "Token ${TEAMKIT_PUBLIC_WIKI_KEY}"}, ConnectTimeout: 60, Timeout: 120},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("MCPs = %#v, want %#v", got, want)

@@ -43,9 +43,9 @@ func TestResolverResolveForPlanLoadsOnlyRequiredActionKeys(t *testing.T) {
 		{
 			name: "Hermes provider configuration", actions: []reconcile.Action{{Kind: reconcile.ActionConfigureApplication}},
 			values: map[string]string{
-				CustomLLMAPIKey: "provider", "HERMES_CUSTOM_ISSUE_TRACKER_TOKEN": "jira-token", "HERMES_CUSTOM_KNOWLEDGE_BASE_TOKEN": "confluence-token",
+				PublicProviderAPIKey: "provider", "TEAMKIT_PUBLIC_ISSUES_KEY": "jira-token", "TEAMKIT_PUBLIC_WIKI_KEY": "confluence-token",
 			},
-			want: []string{CustomLLMAPIKey, "HERMES_CUSTOM_ISSUE_TRACKER_TOKEN", "HERMES_CUSTOM_KNOWLEDGE_BASE_TOKEN"},
+			want: []string{PublicProviderAPIKey, "TEAMKIT_PUBLIC_ISSUES_KEY", "TEAMKIT_PUBLIC_WIKI_KEY"},
 		},
 		{
 			name: "Git sync with optional CA", actions: []reconcile.Action{{Kind: reconcile.ActionSyncContent}},
@@ -98,7 +98,7 @@ func TestResolverRejectsRedirectedApplicationHomeBeforeOpeningSecretStore(t *tes
 func TestResolverRejectsRedirectedSecretFileBeforeOpeningSecretStore(t *testing.T) {
 	home := testutil.TempDir(t)
 	sentinel := filepath.Join(testutil.TempDir(t), "outside.env")
-	if err := os.WriteFile(sentinel, []byte("GITLAB_TOKEN=teamkit-secret-canary\n"), 0o600); err != nil {
+	if err := os.WriteFile(sentinel, []byte("TEAMKIT_SOURCE_TOKEN=teamkit-secret-canary\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(sentinel, filepath.Join(home, ".env")); err != nil {
@@ -107,7 +107,7 @@ func TestResolverRejectsRedirectedSecretFileBeforeOpeningSecretStore(t *testing.
 
 	assertResolverRejectsHomeBeforeSecrets(t, hermesDesired(t), home)
 	data, err := os.ReadFile(sentinel)
-	if err != nil || string(data) != "GITLAB_TOKEN=teamkit-secret-canary\n" {
+	if err != nil || string(data) != "TEAMKIT_SOURCE_TOKEN=teamkit-secret-canary\n" {
 		t.Fatalf("external secret changed to %q: %v", data, err)
 	}
 }
@@ -133,7 +133,7 @@ func assertResolverRejectsHomeBeforeSecrets(t *testing.T, desired domain.Desired
 		Store: func(string) (SecretStore, error) {
 			opened++
 			return &fakeStore{values: map[string]string{
-				GitLabUsername: "user", GitLabToken: "token", CustomLLMAPIKey: "provider",
+				GitLabUsername: "user", GitLabToken: "token", PublicProviderAPIKey: "provider",
 			}}, nil
 		},
 		Reader: reader,
@@ -185,7 +185,7 @@ func (r *fakeReader) ReadSecret(label string) (string, error) {
 
 func TestResolverUsesExistingAppLocalSecretsWithoutPrompt(t *testing.T) {
 	store := &fakeStore{values: map[string]string{
-		GitLabUsername: "dmitry.pavlov", GitLabToken: "token", CustomLLMAPIKey: "llm-key", "HERMES_CUSTOM_ISSUE_TRACKER_TOKEN": "jira-token", "HERMES_CUSTOM_KNOWLEDGE_BASE_TOKEN": "confluence-token",
+		GitLabUsername: "dmitry.pavlov", GitLabToken: "token", PublicProviderAPIKey: "llm-key", "TEAMKIT_PUBLIC_ISSUES_KEY": "jira-token", "TEAMKIT_PUBLIC_WIKI_KEY": "confluence-token",
 	}}
 	reader := &fakeReader{}
 	resolver := Resolver{
@@ -202,7 +202,7 @@ func TestResolverUsesExistingAppLocalSecretsWithoutPrompt(t *testing.T) {
 	if len(reader.labels) != 0 || store.saved != nil {
 		t.Fatalf("unexpected prompt/save: labels=%v saved=%v", reader.labels, store.saved)
 	}
-	if !reflect.DeepEqual(store.loaded, [][]string{{GitLabUsername, GitLabToken, CustomLLMAPIKey, "HERMES_CUSTOM_ISSUE_TRACKER_TOKEN", "HERMES_CUSTOM_KNOWLEDGE_BASE_TOKEN"}}) {
+	if !reflect.DeepEqual(store.loaded, [][]string{{GitLabUsername, GitLabToken, PublicProviderAPIKey, "TEAMKIT_PUBLIC_ISSUES_KEY", "TEAMKIT_PUBLIC_WIKI_KEY"}}) {
 		t.Fatalf("loaded=%#v", store.loaded)
 	}
 }
@@ -218,10 +218,10 @@ func TestResolverPromptsMaskedForMissingValuesAndPersistsThem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got[GitLabToken] != "git-token" || got[CustomLLMAPIKey] != "llm-key" || got["HERMES_CUSTOM_ISSUE_TRACKER_TOKEN"] != "jira-token" || got["HERMES_CUSTOM_KNOWLEDGE_BASE_TOKEN"] != "confluence-token" {
+	if got[GitLabToken] != "git-token" || got[PublicProviderAPIKey] != "llm-key" || got["TEAMKIT_PUBLIC_ISSUES_KEY"] != "jira-token" || got["TEAMKIT_PUBLIC_WIKI_KEY"] != "confluence-token" {
 		t.Fatalf("resolved values missing: keys=%v", sortedKeys(got))
 	}
-	if !reflect.DeepEqual(reader.labels, []string{GitLabToken, CustomLLMAPIKey, "HERMES_CUSTOM_ISSUE_TRACKER_TOKEN", "HERMES_CUSTOM_KNOWLEDGE_BASE_TOKEN"}) {
+	if !reflect.DeepEqual(reader.labels, []string{GitLabToken, PublicProviderAPIKey, "TEAMKIT_PUBLIC_ISSUES_KEY", "TEAMKIT_PUBLIC_WIKI_KEY"}) {
 		t.Fatalf("prompt labels=%v", reader.labels)
 	}
 	if store.saved[GitLabUsername] != "dmitry.pavlov" || store.saved[GitLabToken] == "" {
@@ -236,7 +236,7 @@ func TestResolverNonInteractiveMissingErrorContainsNamesNotValues(t *testing.T) 
 		Store: func(string) (SecretStore, error) { return store, nil },
 	}
 	_, err := resolver.Resolve(context.Background(), hermesDesired(t), false)
-	want := "CREDENTIALS_REQUIRED: HERMES_CUSTOM_LLM_API_KEY,HERMES_CUSTOM_ISSUE_TRACKER_TOKEN,HERMES_CUSTOM_KNOWLEDGE_BASE_TOKEN"
+	want := "CREDENTIALS_REQUIRED: TEAMKIT_PUBLIC_PROVIDER_API_KEY,TEAMKIT_PUBLIC_ISSUES_KEY,TEAMKIT_PUBLIC_WIKI_KEY"
 	if err == nil || err.Error() != want {
 		t.Fatalf("error=%v, want %q", err, want)
 	}
@@ -245,7 +245,7 @@ func TestResolverNonInteractiveMissingErrorContainsNamesNotValues(t *testing.T) 
 	}
 }
 
-func TestResolverAlternativeAppDoesNotRequestCustomLLMKey(t *testing.T) {
+func TestResolverAlternativeAppDoesNotRequestPublicProviderKey(t *testing.T) {
 	root := testutil.TempDir(t)
 	desired, err := domain.NewDesiredState(domain.DesiredStateInput{
 		OS: domain.OSLinux, Application: domain.AppCodex, AppInstalled: true,
@@ -265,7 +265,7 @@ func TestResolverAlternativeAppDoesNotRequestCustomLLMKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{CustomLLMAPIKey, "HERMES_CUSTOM_ISSUE_TRACKER_TOKEN", "HERMES_CUSTOM_KNOWLEDGE_BASE_TOKEN"} {
+	for _, key := range []string{PublicProviderAPIKey, "TEAMKIT_PUBLIC_ISSUES_KEY", "TEAMKIT_PUBLIC_WIKI_KEY"} {
 		if _, exists := got[key]; exists {
 			t.Fatalf("alternative app unexpectedly requested %s", key)
 		}

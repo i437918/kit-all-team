@@ -18,7 +18,7 @@ type AskPassSession struct {
 	credentials Credentials
 }
 
-const gitLabAskPassHost = "gitlab.tools.enterprise.ru"
+const gitLabAskPassHost = "source.example.invalid"
 
 // NewAskPassSession creates a helper directly below tempRoot. It reads only the
 // username and token supplied by Git's child-process environment.
