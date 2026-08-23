@@ -14,7 +14,7 @@ import (
 )
 
 func TestNormalizeOwnerOnly_POSIXSets0600AndPreservesBytes(t *testing.T) {
-	secret := []byte("HERMES_CUSTOM_LLM_API_KEY=sentinel\n")
+	secret := []byte("TEAMKIT_PUBLIC_PROVIDER_API_KEY=sentinel\n")
 	path := filepath.Join(testutil.TempDir(t), ".env")
 	if err := os.WriteFile(path, secret, 0o644); err != nil {
 		t.Fatal(err)

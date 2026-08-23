@@ -24,19 +24,19 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func TestProvider_CustomLLMContract(t *testing.T) {
-	provider := CustomLLMProvider()
+func TestProvider_PublicProviderContract(t *testing.T) {
+	provider := PublicProviderProvider()
 
 	if provider.Endpoint != "https://llm.example.invalid/v1" {
 		t.Fatalf("endpoint = %q", provider.Endpoint)
 	}
-	if provider.Model != "generic-development" {
+	if provider.Model != "public-development" {
 		t.Fatalf("model = %q", provider.Model)
 	}
-	if provider.APIKeyEnvironment != "HERMES_CUSTOM_LLM_API_KEY" {
+	if provider.APIKeyEnvironment != "TEAMKIT_PUBLIC_PROVIDER_API_KEY" {
 		t.Fatalf("API key environment = %q", provider.APIKeyEnvironment)
 	}
-	if provider.ID != "customllm" || provider.Name != "CustomLLM" || provider.APIMode != "chat_completions" {
+	if provider.ID != "public-provider" || provider.Name != "PublicProvider" || provider.APIMode != "chat_completions" {
 		t.Fatalf("provider identity = %#v", provider)
 	}
 }
@@ -59,7 +59,7 @@ func TestProfile_Render_ContainsPinnedToolchainAndMCPs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WithOfficeCLI() error = %v", err)
 	}
-	rendered, err := profile.Render(CustomLLMProvider())
+	rendered, err := profile.Render(PublicProviderProvider())
 	if err != nil {
 		t.Fatalf("Render() error = %v", err)
 	}
@@ -71,15 +71,15 @@ func TestProfile_Render_ContainsPinnedToolchainAndMCPs(t *testing.T) {
 		t.Fatalf("config version = %#v", config["_config_version"])
 	}
 	model := config["model"].(map[string]any)
-	if model["default"] != "generic-development" || model["provider"] != "custom:customllm" ||
+	if model["default"] != "public-development" || model["provider"] != "custom:public-provider" ||
 		model["base_url"] != "https://llm.example.invalid/v1" || model["api_mode"] != "chat_completions" ||
-		model["api_key"] != "${HERMES_CUSTOM_LLM_API_KEY}" {
+		model["api_key"] != "${TEAMKIT_PUBLIC_PROVIDER_API_KEY}" {
 		t.Fatalf("model config = %#v", model)
 	}
 	providers := config["providers"].(map[string]any)
-	provider := providers["customllm"].(map[string]any)
-	if len(providers) != 1 || provider["name"] != "CustomLLM" || provider["api"] != "https://llm.example.invalid/v1" ||
-		provider["key_env"] != "HERMES_CUSTOM_LLM_API_KEY" || provider["default_model"] != "generic-development" ||
+	provider := providers["public-provider"].(map[string]any)
+	if len(providers) != 1 || provider["name"] != "PublicProvider" || provider["api"] != "https://llm.example.invalid/v1" ||
+		provider["key_env"] != "TEAMKIT_PUBLIC_PROVIDER_API_KEY" || provider["default_model"] != "public-development" ||
 		provider["transport"] != "chat_completions" {
 		t.Fatalf("providers config = %#v", providers)
 	}
@@ -135,12 +135,12 @@ func TestProfile_RenderRejectsRelativeOfficeCLICommand(t *testing.T) {
 		V8StdEndpoint:    "https://mcp.example.test/v8std",
 		OfficeCLICommand: filepath.Join("relative", officeCLIManagedNameForTest()),
 	}
-	if rendered, err := direct.Render(CustomLLMProvider()); !errors.Is(err, errInvalidProfile) || rendered != nil {
+	if rendered, err := direct.Render(PublicProviderProvider()); !errors.Is(err, errInvalidProfile) || rendered != nil {
 		t.Fatalf("Render() = %q, %v; want nil errInvalidProfile", rendered, err)
 	}
 }
 
-func TestProfile_RenderForSchema_RendersCorporateAtlassianMCPs(t *testing.T) {
+func TestProfile_RenderForSchema_RenderspublicAtlassianMCPs(t *testing.T) {
 	profile := Profile{
 		Project: "billing",
 		Role:    "developer",
@@ -174,7 +174,7 @@ func TestProfile_RenderForSchema_RendersCorporateAtlassianMCPs(t *testing.T) {
 	}
 	for _, schema := range []int{34, 37} {
 		t.Run(fmt.Sprintf("schema-%d", schema), func(t *testing.T) {
-			rendered, err := profile.RenderForSchema(CustomLLMProvider(), schema)
+			rendered, err := profile.RenderForSchema(PublicProviderProvider(), schema)
 			if err != nil {
 				t.Fatalf("RenderForSchema() error = %v", err)
 			}
@@ -187,18 +187,18 @@ func TestProfile_RenderForSchema_RendersCorporateAtlassianMCPs(t *testing.T) {
 			if len(config.MCPServers) != 4 {
 				t.Fatalf("MCP server count = %d, want 4", len(config.MCPServers))
 			}
-			jira := config.MCPServers["customllm-jira"]
+			jira := config.MCPServers["public-provider-issues"]
 			if !jira.Enabled {
 				t.Fatal("Jira MCP must be enabled")
 			}
-			if jira.URL != "https://llm.example.invalid/jira/mcp" || jira.Headers["x-mcp-jira-authorization"] != "Token ${HERMES_CUSTOM_ISSUE_TRACKER_TOKEN}" || jira.Sampling == nil || jira.Sampling.Enabled || jira.SupportsParallelToolCalls == nil || *jira.SupportsParallelToolCalls || jira.ConnectTimeout != 60 || jira.Timeout != 120 {
+			if jira.URL != "https://mcp.example.invalid/issues" || jira.Headers["x-mcp-jira-authorization"] != "Token ${TEAMKIT_PUBLIC_ISSUES_KEY}" || jira.Sampling == nil || jira.Sampling.Enabled || jira.SupportsParallelToolCalls == nil || *jira.SupportsParallelToolCalls || jira.ConnectTimeout != 60 || jira.Timeout != 120 {
 				t.Fatalf("jira = %#v", jira)
 			}
-			conf := config.MCPServers["customllm-confluence"]
+			conf := config.MCPServers["public-provider-wiki"]
 			if !conf.Enabled {
 				t.Fatal("Confluence MCP must be enabled")
 			}
-			if conf.URL != "https://llm.example.invalid/confluence/mcp" || conf.Headers["x-mcp-confluence-authorization"] != "Token ${HERMES_CUSTOM_KNOWLEDGE_BASE_TOKEN}" {
+			if conf.URL != "https://mcp.example.invalid/wiki" || conf.Headers["x-mcp-confluence-authorization"] != "Token ${TEAMKIT_PUBLIC_WIKI_KEY}" {
 				t.Fatalf("confluence = %#v", conf)
 			}
 			officeCLI := config.MCPServers["officecli"]
@@ -2041,7 +2041,7 @@ func TestCertificateEnvironmentReady_RequiresAllSixExactBundleBindings(t *testin
 		t.Fatal(err)
 	}
 	environment := ApplicationCAEnvironment(bundle)
-	environment[CustomLLMProvider().APIKeyEnvironment] = "provider-test-value"
+	environment[PublicProviderProvider().APIKeyEnvironment] = "provider-test-value"
 	var lines []string
 	for key, value := range environment {
 		lines = append(lines, key+"="+value)
@@ -2067,7 +2067,7 @@ func TestCertificateEnvironmentReady_RequiresAllSixExactBundleBindings(t *testin
 	}
 }
 
-func TestCertificateEnvironmentReady_RequiresNonBlankCustomLLMKey(t *testing.T) {
+func TestCertificateEnvironmentReady_RequiresNonBlankPublicProviderKey(t *testing.T) {
 	home := testutil.TempDir(t)
 	bundle := filepath.Join(home, "certs", "ca-bundle.pem")
 	if err := os.MkdirAll(filepath.Dir(bundle), 0o700); err != nil {
@@ -2088,7 +2088,7 @@ func TestCertificateEnvironmentReady_RequiresNonBlankCustomLLMKey(t *testing.T) 
 		t.Run(test.name, func(t *testing.T) {
 			values := ApplicationCAEnvironment(bundle)
 			if test.include {
-				values[CustomLLMProvider().APIKeyEnvironment] = test.value
+				values[PublicProviderProvider().APIKeyEnvironment] = test.value
 			}
 			var lines []string
 			for key, value := range values {

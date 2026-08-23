@@ -14,8 +14,8 @@ type Provider struct {
 	APIKeyEnvironment string `json:"api_key_environment"`
 }
 
-// CustomLLMProvider returns the approved default Hermes provider contract.
-func CustomLLMProvider() Provider {
+// PublicProviderProvider returns the approved default Hermes provider contract.
+func PublicProviderProvider() Provider {
 	pinned := catalog.DefaultProvider()
 	return Provider{
 		ID:                pinned.ID,

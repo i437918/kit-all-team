@@ -60,13 +60,13 @@ func TestEffects_ObserveRequiresManagedHermesInstallForApplicationReadiness(t *t
 		t.Fatal("exact managed Hermes installation was not reported application-ready")
 	}
 
-	providerKey := []byte(hermes.CustomLLMProvider().APIKeyEnvironment + "=provider-test-value\n")
+	providerKey := []byte(hermes.PublicProviderProvider().APIKeyEnvironment + "=provider-test-value\n")
 	profileEnv := filepath.Join(profileDirectory(desired), ".env")
 	profileData, err := os.ReadFile(profileEnv)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(profileEnv, bytes.ReplaceAll(profileData, providerKey, []byte(hermes.CustomLLMProvider().APIKeyEnvironment+"=   \n")), 0o600); err != nil {
+	if err := os.WriteFile(profileEnv, bytes.ReplaceAll(profileData, providerKey, []byte(hermes.PublicProviderProvider().APIKeyEnvironment+"=   \n")), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	assertHermesConfigureReplanned(t, effects, desired)
@@ -229,7 +229,7 @@ func TestProfileConfigReady_RequiresExactOfficeCLIProfileBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	legacyData, err := legacy.RenderForSchema(hermes.CustomLLMProvider(), 34)
+	legacyData, err := legacy.RenderForSchema(hermes.PublicProviderProvider(), 34)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +248,7 @@ func TestProfileConfigReady_RequiresExactOfficeCLIProfileBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	exactData, err := withOfficeCLI.RenderForSchema(hermes.CustomLLMProvider(), 34)
+	exactData, err := withOfficeCLI.RenderForSchema(hermes.PublicProviderProvider(), 34)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,7 +287,7 @@ func writeReadyHermesProfile(t *testing.T, desired domain.DesiredState) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := profile.Render(hermes.CustomLLMProvider())
+	data, err := profile.Render(hermes.PublicProviderProvider())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,7 +315,7 @@ func writeReadyHermesProfileWithOfficeCLI(t *testing.T, desired domain.DesiredSt
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := profile.Render(hermes.CustomLLMProvider())
+	data, err := profile.Render(hermes.PublicProviderProvider())
 	if err != nil {
 		t.Fatal(err)
 	}

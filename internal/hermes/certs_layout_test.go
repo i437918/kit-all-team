@@ -15,7 +15,7 @@ func TestCertificates_NormalizesSuppliedCertsDirectoryToManagedRoot(t *testing.T
 	home := testutil.TempDir(t)
 	archive := zipFixtures(t, map[string]string{
 		"certs/ca-bundle.pem":            "bundle-data",
-		"certs/enterprise-ca-chain.pem": "chain-data",
+		"certs/publicorg-ca-chain.pem": "chain-data",
 	})
 	digest := sha256.Sum256(archive)
 
