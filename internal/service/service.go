@@ -751,7 +751,7 @@ func (s *Service) mutationWithStoreExecutable(desired domain.DesiredState, input
 			return engine.Engine{}, nil, err
 		}
 		profileEnvironment = map[string]string{
-			credentials.CustomLLMAPIKey: values[credentials.CustomLLMAPIKey],
+			credentials.PublicProviderAPIKey: values[credentials.PublicProviderAPIKey],
 			credentials.JiraToken:        values[credentials.JiraToken],
 			credentials.ConfluenceToken:  values[credentials.ConfluenceToken],
 		}
@@ -1037,7 +1037,7 @@ func requiredSecretKeys(desired domain.DesiredState, actions []reconcile.Action)
 		keys = append(keys, credentials.GitLabUsername, credentials.GitLabToken, GitCAFile)
 	}
 	if providerRequired {
-		keys = append(keys, credentials.CustomLLMAPIKey, credentials.JiraToken, credentials.ConfluenceToken)
+		keys = append(keys, credentials.PublicProviderAPIKey, credentials.JiraToken, credentials.ConfluenceToken)
 	}
 	return keys
 }

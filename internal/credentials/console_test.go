@@ -22,7 +22,7 @@ func TestConsoleReaderUsesRussianCredentialLabels(t *testing.T) {
 
 	var output bytes.Buffer
 	reader := NewConsoleReader(input, &output)
-	for _, key := range []string{GitLabUsername, GitLabToken, CustomLLMAPIKey, "HERMES_CUSTOM_ISSUE_TRACKER_TOKEN", "HERMES_CUSTOM_KNOWLEDGE_BASE_TOKEN"} {
+	for _, key := range []string{GitLabUsername, GitLabToken, PublicProviderAPIKey, "TEAMKIT_PUBLIC_ISSUES_KEY", "TEAMKIT_PUBLIC_WIKI_KEY"} {
 		if _, err := reader.ReadSecret(key); err != nil {
 			t.Fatal(err)
 		}
@@ -30,8 +30,8 @@ func TestConsoleReaderUsesRussianCredentialLabels(t *testing.T) {
 
 	for _, want := range []string{
 		"Логин GitLab (GITLAB_USERNAME) (ввод скрыт): ",
-		"Токен GitLab (GITLAB_TOKEN) (ввод скрыт): ",
-		"Ключ CustomLLM (HERMES_CUSTOM_LLM_API_KEY) (ввод скрыт): ",
+		"Токен GitLab (TEAMKIT_SOURCE_TOKEN) (ввод скрыт): ",
+		"Ключ PublicProvider (TEAMKIT_PUBLIC_PROVIDER_API_KEY) (ввод скрыт): ",
 		"Jira personal token (ввод скрыт): ",
 		"Confluence personal token (ввод скрыт): ",
 	} {
