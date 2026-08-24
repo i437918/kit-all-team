@@ -76,17 +76,17 @@ type MCP struct {
 }
 
 var projects = [...]Project{
-	{domain.ProjectAISUZ, "https://gitlab.example.invalid/1c/aisuz/ai.git", "content-aisuz", "https://gitlab.example.invalid/1c/aisuz/main.git", "develop"},
-	{domain.ProjectAPA, "https://gitlab.example.invalid/1c/aisuz/ai.git", "content-apa", "https://gitlab.example.invalid/1c/apa/main.git", "develop"},
-	{domain.ProjectASBNU, "https://gitlab.example.invalid/1c/aisuz/ai.git", "content-asbnu", "https://gitlab.example.invalid/1c/asbnu/asbnu3.git", "develop"},
-	{domain.ProjectASKU, "https://gitlab.example.invalid/1c/aisuz/ai.git", "content-asku", "https://gitlab.example.invalid/1c/asku/main.git", "develop"},
-	{domain.ProjectEASR, "https://gitlab.example.invalid/1c/aisuz/ai.git", "content-easr", "https://gitlab.example.invalid/1c/easr/main.git", "develop"},
-	{domain.ProjectEISKO, "https://gitlab.example.invalid/1c/aisuz/ai.git", "content-eisko", "https://gitlab.example.invalid/1c/eisko/eisko1.git", "develop"},
-	{domain.ProjectESED, "https://gitlab.example.invalid/1c/aisuz/ai.git", "content-esed", "https://gitlab.example.invalid/1c/esed/main.git", "develop"},
-	{domain.ProjectUAT, "https://gitlab.example.invalid/1c/aisuz/ai.git", "content-uat", "https://gitlab.example.invalid/1c/uat/main.git", "develop"},
-	{domain.ProjectUNIP, "https://gitlab.example.invalid/1c/aisuz/ai.git", "content-unip", "https://gitlab.example.invalid/1c/unip/main.git", "develop"},
-	{domain.ProjectZUP, "https://gitlab.example.invalid/1c/aisuz/ai.git", "content-zup", "https://gitlab.example.invalid/1c/zup/zup3.git", "develop"},
-	{domain.ProjectWMS, "https://gitlab.example.invalid/1c/aisuz/ai.git", "content-wms", "https://gitlab.example.invalid/1c/fulfillment/wms.git", "develop"},
+	{domain.ProjectAISUZ, "https://source.example.invalid/teamkit/repository.git", "content-aisuz", "https://source.example.invalid/teamkit/repository.git", "develop"},
+	{domain.ProjectAPA, "https://source.example.invalid/teamkit/repository.git", "content-apa", "https://source.example.invalid/teamkit/repository.git", "develop"},
+	{domain.ProjectASBNU, "https://source.example.invalid/teamkit/repository.git", "content-asbnu", "https://source.example.invalid/teamkit/repository.git", "develop"},
+	{domain.ProjectASKU, "https://source.example.invalid/teamkit/repository.git", "content-asku", "https://source.example.invalid/teamkit/repository.git", "develop"},
+	{domain.ProjectEASR, "https://source.example.invalid/teamkit/repository.git", "content-easr", "https://source.example.invalid/teamkit/repository.git", "develop"},
+	{domain.ProjectEISKO, "https://source.example.invalid/teamkit/repository.git", "content-eisko", "https://source.example.invalid/teamkit/repository.git", "develop"},
+	{domain.ProjectESED, "https://source.example.invalid/teamkit/repository.git", "content-esed", "https://source.example.invalid/teamkit/repository.git", "develop"},
+	{domain.ProjectUAT, "https://source.example.invalid/teamkit/repository.git", "content-uat", "https://source.example.invalid/teamkit/repository.git", "develop"},
+	{domain.ProjectUNIP, "https://source.example.invalid/teamkit/repository.git", "content-unip", "https://source.example.invalid/teamkit/repository.git", "develop"},
+	{domain.ProjectZUP, "https://source.example.invalid/teamkit/repository.git", "content-zup", "https://source.example.invalid/teamkit/repository.git", "develop"},
+	{domain.ProjectWMS, "https://source.example.invalid/teamkit/repository.git", "content-wms", "https://source.example.invalid/teamkit/repository.git", "develop"},
 }
 
 var roles = [...]Role{
@@ -129,8 +129,8 @@ var applications = [...]AIApplication{
 }
 
 var atlassianMCPs = [...]MCP{
-	{ID: "customllm-jira", Endpoint: "https://llm.example.invalid/jira/mcp", Headers: map[string]string{"x-litellm-api-key": "Bearer ${HERMES_CUSTOM_LLM_API_KEY}", "x-mcp-jira-authorization": "Token ${HERMES_CUSTOM_ISSUE_TRACKER_TOKEN}"}, ConnectTimeout: 60, Timeout: 120},
-	{ID: "customllm-confluence", Endpoint: "https://llm.example.invalid/confluence/mcp", Headers: map[string]string{"x-litellm-api-key": "Bearer ${HERMES_CUSTOM_LLM_API_KEY}", "x-mcp-confluence-authorization": "Token ${HERMES_CUSTOM_KNOWLEDGE_BASE_TOKEN}"}, ConnectTimeout: 60, Timeout: 120},
+	{ID: "public-provider-issues", Endpoint: "https://mcp.example.invalid/issues", Headers: map[string]string{"x-litellm-api-key": "Bearer ${TEAMKIT_PUBLIC_PROVIDER_API_KEY}", "x-mcp-jira-authorization": "Token ${TEAMKIT_PUBLIC_ISSUES_KEY}"}, ConnectTimeout: 60, Timeout: 120},
+	{ID: "public-provider-wiki", Endpoint: "https://mcp.example.invalid/wiki", Headers: map[string]string{"x-litellm-api-key": "Bearer ${TEAMKIT_PUBLIC_PROVIDER_API_KEY}", "x-mcp-confluence-authorization": "Token ${TEAMKIT_PUBLIC_WIKI_KEY}"}, ConnectTimeout: 60, Timeout: 120},
 }
 
 // Projects returns a defensive copy in stable display and planning order.
@@ -215,15 +215,15 @@ func LookupAIApplication(id domain.AIApplication) (AIApplication, error) {
 	return AIApplication{}, domain.NewValidationError(domain.ApplicationUnknown, "application", string(id))
 }
 
-// DefaultProvider returns the pinned CustomLLM provider configuration.
+// DefaultProvider returns the pinned PublicProvider provider configuration.
 func DefaultProvider() Provider {
 	return Provider{
-		ID:                "customllm",
-		Name:              "CustomLLM",
+		ID:                "public-provider",
+		Name:              "PublicProvider",
 		BaseURL:           "https://llm.example.invalid/v1",
-		Model:             "generic-development",
+		Model:             "public-development",
 		APIMode:           "chat_completions",
-		APIKeyEnvironment: "HERMES_CUSTOM_LLM_API_KEY",
+		APIKeyEnvironment: "TEAMKIT_PUBLIC_PROVIDER_API_KEY",
 	}
 }
 
@@ -235,7 +235,7 @@ func V8StdMCP() MCP {
 	}
 }
 
-// AtlassianMCPs returns the closed corporate Atlassian MCP declarations.
+// AtlassianMCPs returns the closed public Atlassian MCP declarations.
 func AtlassianMCPs() []MCP {
 	mcpServers := make([]MCP, len(atlassianMCPs))
 	for i, server := range atlassianMCPs {

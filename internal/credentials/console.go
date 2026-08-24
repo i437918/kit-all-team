@@ -7,11 +7,9 @@ import (
 	"io"
 	"os"
 	"strings"
-
-	"golang.org/x/term"
 )
 
-// ConsoleReader masks secret input on a terminal and supports piped test input.
+// ConsoleReader reads visible credential input from a terminal or pipe.
 type ConsoleReader struct {
 	input  *os.File
 	output io.Writer
@@ -29,7 +27,7 @@ func NewConsoleReaderWithBufferedInput(input *os.File, output io.Writer, lines *
 	return &ConsoleReader{input: input, output: output, lines: lines}
 }
 
-// ReadSecret reads one value without echo when the input is a terminal.
+// ReadSecret reads one visible credential value from the shared console input.
 func (r *ConsoleReader) ReadSecret(label string) (string, error) {
 	return r.readSecret(label)
 }
@@ -58,16 +56,8 @@ func (r *ConsoleReader) readSecret(label string) (string, error) {
 	if r == nil || r.input == nil || r.output == nil {
 		return "", fmt.Errorf("credential console is unavailable")
 	}
-	if _, err := fmt.Fprintf(r.output, "%s (ввод скрыт): ", displayCredentialLabel(label)); err != nil {
+	if _, err := fmt.Fprintf(r.output, "%s (ввод виден): ", displayCredentialLabel(label)); err != nil {
 		return "", err
-	}
-	if term.IsTerminal(int(r.input.Fd())) {
-		value, err := term.ReadPassword(int(r.input.Fd()))
-		fmt.Fprintln(r.output)
-		if err != nil {
-			return "", err
-		}
-		return strings.TrimSpace(string(value)), nil
 	}
 	value, err := r.lines.ReadString('\n')
 	if err != nil && err != io.EOF {
@@ -75,19 +65,18 @@ func (r *ConsoleReader) readSecret(label string) (string, error) {
 	}
 	return strings.TrimSpace(value), nil
 }
-
 func displayCredentialLabel(label string) string {
 	switch label {
 	case GitLabUsername:
-		return "Логин GitLab (GITLAB_USERNAME)"
+		return "Логин Gitlab (например: ivan.ivanov)"
 	case GitLabToken:
-		return "Токен GitLab (GITLAB_TOKEN)"
-	case CustomLLMAPIKey:
-		return "Ключ CustomLLM (HERMES_CUSTOM_LLM_API_KEY)"
+		return "Токен Gitlab"
+	case PublicProviderAPIKey:
+		return "Токен LLM"
 	case JiraToken:
-		return "Jira personal token"
+		return "Токен Jira"
 	case ConfluenceToken:
-		return "Confluence personal token"
+		return "Токен Confluence"
 	default:
 		return label
 	}

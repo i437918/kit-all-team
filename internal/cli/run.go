@@ -245,6 +245,9 @@ func (r Runner) runDesiredApply(ctx context.Context, opts options, desired domai
 			return r.fail(opts, err, nil)
 		}
 	}
+	if !opts.nonInteractive && !opts.jsonOutput {
+		fmt.Fprintln(r.Out, "Обработка данных ... подождите")
+	}
 	appliedPlan, err := r.Service.Apply(ctx, desired, update, ApplyInputs{Secrets: secrets, HermesInstaller: opts.installerPath, CertificateArchive: opts.certificates})
 	if err != nil {
 		return r.fail(opts, err, secretValues(secrets))

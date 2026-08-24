@@ -154,7 +154,7 @@ func TestRunApplyNeverAcceptsSecretFlagsAndRedactsServiceError(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	runner := Runner{
 		Service: service, Credentials: fixedCredentials{
-			"GITLAB_TOKEN": gitLabCanary, "HERMES_CUSTOM_ISSUE_TRACKER_TOKEN": jiraCanary, "HERMES_CUSTOM_KNOWLEDGE_BASE_TOKEN": confluenceCanary,
+			"TEAMKIT_SOURCE_TOKEN": gitLabCanary, "TEAMKIT_PUBLIC_ISSUES_KEY": jiraCanary, "TEAMKIT_PUBLIC_WIKI_KEY": confluenceCanary,
 		},
 		In: strings.NewReader(""), Out: &stdout, Err: &stderr,
 	}
@@ -177,7 +177,7 @@ func TestRunApplyNeverAcceptsSecretFlagsAndRedactsServiceError(t *testing.T) {
 			}
 		})
 	}
-	if service.secrets["GITLAB_TOKEN"] != gitLabCanary || service.secrets["HERMES_CUSTOM_ISSUE_TRACKER_TOKEN"] != jiraCanary || service.secrets["HERMES_CUSTOM_KNOWLEDGE_BASE_TOKEN"] != confluenceCanary {
+	if service.secrets["TEAMKIT_SOURCE_TOKEN"] != gitLabCanary || service.secrets["TEAMKIT_PUBLIC_ISSUES_KEY"] != jiraCanary || service.secrets["TEAMKIT_PUBLIC_WIKI_KEY"] != confluenceCanary {
 		t.Fatalf("credential source was not passed to service: %#v", service.secrets)
 	}
 
@@ -415,7 +415,7 @@ func TestRunApplyNoOpDoesNotResolveCredentialsOrApply(t *testing.T) {
 func TestRunApplyPrintsSecretFreeAlternativeApplicationHandoff(t *testing.T) {
 	service := &fakeService{hasPlan: true, plan: reconcile.OperationPlan{Actions: []reconcile.Action{{Kind: reconcile.ActionConfigureApplication}}}}
 	var stdout, stderr bytes.Buffer
-	runner := Runner{Service: service, Credentials: fixedCredentials{"GITLAB_TOKEN": "TEAMKIT_HANDOFF_CANARY"}, In: strings.NewReader(""), Out: &stdout, Err: &stderr}
+	runner := Runner{Service: service, Credentials: fixedCredentials{"TEAMKIT_SOURCE_TOKEN": "TEAMKIT_HANDOFF_CANARY"}, In: strings.NewReader(""), Out: &stdout, Err: &stderr}
 	args := []string{
 		"apply", "--non-interactive", "--os", "linux", "--app", "codex", "--app-installed=true",
 		"--kit-home", "/tmp/kit", "--project", "wms", "--role", "developer", "--toolchain", "cc_1c_skills",
@@ -423,14 +423,42 @@ func TestRunApplyPrintsSecretFreeAlternativeApplicationHandoff(t *testing.T) {
 	if code := runner.Run(context.Background(), args); code != ExitOK {
 		t.Fatalf("exit=%d stderr=%q", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "handoff: ") || !strings.Contains(stdout.String(), "codex") {
-		t.Fatalf("stdout=%q", stdout.String())
+	for _, want := range []string{
+		"handoff: ",
+		"Для установки выбранного набора cc_1c_skills",
+		"https://github.com/Nikolay-Shirokov/cc-1c-skills.git",
+		"e01688e764a3cf1c1b4a0ad5069ea885837cfb2e",
+		"https://ai.v8std.ru/mcp",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout=%q does not contain %q", stdout.String(), want)
+		}
 	}
 	if strings.Contains(stdout.String()+stderr.String(), "TEAMKIT_HANDOFF_CANARY") {
 		t.Fatalf("handoff leaked a secret: stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
 }
 
+func TestRunDesiredApplyPrintsProcessingMessageAfterCredentials(t *testing.T) {
+	desired, err := domain.NewDesiredState(domain.DesiredStateInput{
+		OS: domain.OSLinux, Application: domain.AppCodex, AppInstalled: true,
+		KitHome: "/tmp/kit", Project: domain.ProjectWMS, Role: domain.RoleDeveloper,
+		Toolchain: domain.ToolchainAIRules1C,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	empty := reconcile.OperationPlan{}
+	service := &fakeService{hasPlan: true, plan: oneActionPlan(), applyResult: &empty}
+	var stdout, stderr bytes.Buffer
+	runner := Runner{Service: service, Credentials: fixedCredentials{"TEAMKIT_SOURCE_TOKEN": "token"}, Out: &stdout, Err: &stderr}
+	if code := runner.runDesiredApply(context.Background(), options{}, desired, nil, nil); code != ExitOK {
+		t.Fatalf("exit=%d stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Обработка данных ... подождите\n") {
+		t.Fatalf("stdout=%q", stdout.String())
+	}
+}
 func TestRunMapsMissingAlternativeApplicationToStableExit(t *testing.T) {
 	service := &fakeService{err: apps.ErrApplicationRequired}
 	var stderr bytes.Buffer

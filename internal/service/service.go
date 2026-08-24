@@ -69,7 +69,7 @@ var errKitHomeMismatch = errors.New("KIT_HOME_MISMATCH")
 
 // ErrWindowsHermesInstallUnverified prevents unattended execution until the
 // pinned EXE's exact install-directory contract has disposable-runner evidence.
-var ErrWindowsHermesInstallUnverified = errors.New("HERMES_WINDOWS_INSTALL_DIR_UNVERIFIED: install Hermes manually, set HERMES_HOME to its verified installation directory, then rerun with --app-installed=true")
+var ErrWindowsHermesInstallUnverified = errors.New("HERMES_REQUIRED: install Hermes manually, then rerun Team Kit with --app-installed=true")
 
 // ErrHomeOverlap prevents project content and private application state from
 // sharing the same filesystem tree in either nesting direction.
@@ -751,7 +751,7 @@ func (s *Service) mutationWithStoreExecutable(desired domain.DesiredState, input
 			return engine.Engine{}, nil, err
 		}
 		profileEnvironment = map[string]string{
-			credentials.CustomLLMAPIKey: values[credentials.CustomLLMAPIKey],
+			credentials.PublicProviderAPIKey: values[credentials.PublicProviderAPIKey],
 			credentials.JiraToken:        values[credentials.JiraToken],
 			credentials.ConfluenceToken:  values[credentials.ConfluenceToken],
 		}
@@ -1037,7 +1037,7 @@ func requiredSecretKeys(desired domain.DesiredState, actions []reconcile.Action)
 		keys = append(keys, credentials.GitLabUsername, credentials.GitLabToken, GitCAFile)
 	}
 	if providerRequired {
-		keys = append(keys, credentials.CustomLLMAPIKey, credentials.JiraToken, credentials.ConfluenceToken)
+		keys = append(keys, credentials.PublicProviderAPIKey, credentials.JiraToken, credentials.ConfluenceToken)
 	}
 	return keys
 }

@@ -22,7 +22,7 @@ func (d detector) matches(data []byte) bool {
 
 var secretDetectors = []detector{
 	{name: "private_key", pattern: regexp.MustCompile(`-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----`)},
-	{name: "gitlab_token", pattern: regexp.MustCompile(`glpat-[A-Za-z0-9_-]{20,}`)},
+	{name: "source_access_token", pattern: regexp.MustCompile(`glpat-[A-Za-z0-9_-]{20,}`)},
 	{name: "github_token", pattern: regexp.MustCompile(`(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{20,})`)},
 	{name: "aws_access_key", pattern: regexp.MustCompile(`(?:AKIA|ASIA)[0-9A-Z]{16}`)},
 	{name: "google_api_key", pattern: regexp.MustCompile(`AIza[0-9A-Za-z_-]{35}`)},

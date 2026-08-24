@@ -42,12 +42,12 @@ func PrepareHandoff(application Application, request HandoffRequest) (Handoff, e
 	}
 	request.Toolchain = pinned
 	request.V8StdEndpoint = catalog.V8StdMCP().Endpoint
-	for _, value := range []string{application.ID, request.Toolchain.Name, request.Toolchain.Version, request.V8StdEndpoint} {
+	for _, value := range []string{application.ID, request.Toolchain.Name, request.Toolchain.Origin, request.Toolchain.Version, request.V8StdEndpoint} {
 		if !safeArgument(value) {
 			return Handoff{}, fmt.Errorf("unsafe handoff value")
 		}
 	}
-	command := fmt.Sprintf("In %s, configure exactly one toolchain from %s pinned to commit %s, then configure the separate v8std MCP endpoint %s.", application.ID, request.Toolchain.Origin, request.Toolchain.Version, request.V8StdEndpoint)
+	command := installationInstructions(request.Toolchain, request.V8StdEndpoint)
 	for _, secret := range request.SecretValues {
 		if secret != "" && strings.Contains(command, secret) {
 			return Handoff{}, fmt.Errorf("handoff would reveal a secret")
@@ -56,6 +56,15 @@ func PrepareHandoff(application Application, request HandoffRequest) (Handoff, e
 	return Handoff{Command: command}, nil
 }
 
+func installationInstructions(toolchain Toolchain, v8stdEndpoint string) string {
+	return fmt.Sprintf(
+		"Для установки выбранного набора %s используй источник %s с точным закреплённым commit %s.\n\nДля настройки MCP-сервера v8std.ru используй endpoint %s.",
+		toolchain.Name,
+		toolchain.Origin,
+		toolchain.Version,
+		v8stdEndpoint,
+	)
+}
 func isSupportedApplication(id string) bool {
 	for _, supported := range SupportedApplications() {
 		if string(supported) == id {
