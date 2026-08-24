@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "version": "v0.1.6",
-  "source_revision": "eb757a2624854bb33a929bb260669b7840b62780",
-  "source_commit_time": "2026-08-24T12:02:49+03:00",
+  "source_revision": "84a4107f670c3227415aa79f14396c104c65b91f",
+  "source_commit_time": "2026-08-24T12:44:52+03:00",
   "files": [
     {
       "path": ".github/workflows/ci.yml",
