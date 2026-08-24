@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
   "version": "v0.1.6",
-  "source_revision": "109140d4d52e40b3a83880da832c618bf68a8f31",
-  "source_commit_time": "2026-08-24T14:02:12+03:00",
+  "source_revision": "4bc298fb44af1ac947b07708efa3012662e513c8",
+  "source_commit_time": "2026-08-25T00:24:10+03:00",
   "files": [
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "7a284add30e795a7e35f6d836506dc379cf6c96cc247eaf52a64b112f396c073"
+      "sha256": "5c033d54d16f7ee9102bfd4c5b70a84a45c00ba95845660ee189106aa78a9241"
     },
     {
       "path": "cmd/teamkit-security-audit/main_test.go",
@@ -698,11 +698,11 @@
     },
     {
       "path": "internal/securityaudit/audit_test.go",
-      "sha256": "1470c76a762476eebb8750904736c37134b7a21742a2f82243d1c405cb6926b6"
+      "sha256": "1e7dab254e5e41c437a6ab2877bc3a9e23fae720c0ddb82512b74a03dd472559"
     },
     {
       "path": "internal/securityaudit/audit.go",
-      "sha256": "44cb96bda2ccf1052cb0add223d4cd62e9028945ce8d480260d8fcda725dcd3a"
+      "sha256": "b7fcf454818427cf3a03e4c95f63d8b1fe06911075117a22349fe523a6fc61f0"
     },
     {
       "path": "internal/securityaudit/git_portability_test.go",
@@ -859,6 +859,10 @@
     {
       "path": "scripts/qualify-alt-officecli-image.sh",
       "sha256": "53a92686590d97a1a2cc69dbcb009cdf0685a7b108cc34c99626d52cf1f00c49"
+    },
+    {
+      "path": "scripts/stage-v0.1.6.ps1",
+      "sha256": "dad166aca04760565eef0db8f9ef916098317fc075d7dfb28c6ad30a3e1bb931"
     },
     {
       "path": "scripts/verify.ps1",

@@ -18,14 +18,13 @@ import (
 )
 
 const (
-	maxInputBytes           = int64(64 << 20)
-	maxGitCommandOutput     = int64(64 << 20)
-	maxGitObjects           = 1_000_000
-	maxGitPaths             = 1_000_000
-	maxArchiveItems         = 10_000
-	maxArchiveDepth         = 3
-	reportSchema            = 1
-	releaseCandidateVersion = "v0.1.5"
+	maxInputBytes       = int64(64 << 20)
+	maxGitCommandOutput = int64(64 << 20)
+	maxGitObjects       = 1_000_000
+	maxGitPaths         = 1_000_000
+	maxArchiveItems     = 10_000
+	maxArchiveDepth     = 3
+	reportSchema        = 1
 )
 
 // Options selects the repository and release artifacts to scan. At least one
@@ -137,7 +136,7 @@ func Audit(ctx context.Context, options Options) (Report, error) {
 		return Report{}, fmt.Errorf("security audit input is required")
 	}
 
-	report := Report{SchemaVersion: reportSchema, Commit: commit, HistoryRevision: repositoryRevision}
+	report := Report{SchemaVersion: reportSchema, Commit: commit, HistoryRevision: repositoryRevision, Findings: []Finding{}}
 	if strings.TrimSpace(options.Repository) != "" {
 		report.HistoryScope = "all_refs"
 		if historyRef != "" {
@@ -216,11 +215,19 @@ func (a *auditor) readAndScan(scope, location, path string) error {
 
 var commitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
-var releaseCandidateBinaryNames = []string{
-	"teamkit-v0.1.5-windows-amd64.exe",
-	"teamkit-v0.1.5-linux-amd64",
-	"teamkit-v0.1.5-darwin-amd64",
-	"teamkit-v0.1.5-darwin-arm64",
+var releaseCandidateBinariesByVersion = map[string][]string{
+	"v0.1.5": {
+		"teamkit-v0.1.5-windows-amd64.exe",
+		"teamkit-v0.1.5-linux-amd64",
+		"teamkit-v0.1.5-darwin-amd64",
+		"teamkit-v0.1.5-darwin-arm64",
+	},
+	"v0.1.6": {
+		"teamkit-v0.1.6-windows-amd64.exe",
+		"teamkit-v0.1.6-linux-amd64",
+		"teamkit-v0.1.6-darwin-amd64",
+		"teamkit-v0.1.6-darwin-arm64",
+	},
 }
 
 func (a *auditor) inspectCandidateBinary(location, path string, data []byte) {
@@ -238,7 +245,7 @@ func (a *auditor) inspectCandidateBinary(location, path string, data []byte) {
 		return
 	}
 	identity.Version, identity.Commit = embeddedCandidateIdentity(data)
-	if identity.Version != releaseCandidateVersion {
+	if identity.Version != releaseCandidateVersionForFilename(filename) {
 		a.addFinding("candidate_identity", "embedded_version", location)
 	}
 	if a.expectedCommit == "" || identity.Commit != a.expectedCommit {
@@ -252,20 +259,46 @@ func (a *auditor) verifyCandidateBinaries() {
 	for _, identity := range a.binaries {
 		seen[identity.Filename] = true
 	}
-	for _, filename := range releaseCandidateBinaryNames {
-		if !seen[filename] {
-			a.addFinding("candidate_identity", "missing_binary", filename)
+	completeSets := 0
+	for version, filenames := range releaseCandidateBinariesByVersion {
+		present := 0
+		for _, filename := range filenames {
+			if seen[filename] {
+				present++
+			}
 		}
+		if present == 0 {
+			continue
+		}
+		if present != len(filenames) {
+			for _, filename := range filenames {
+				if !seen[filename] {
+					a.addFinding("candidate_identity", "missing_binary", version+":"+filename)
+				}
+			}
+		}
+		if present == len(filenames) {
+			completeSets++
+		}
+	}
+	if completeSets != 1 {
+		a.addFinding("candidate_identity", "mixed_binary_set", "release-candidate")
 	}
 }
 
 func isReleaseCandidateBinary(filename string) bool {
-	for _, candidate := range releaseCandidateBinaryNames {
-		if filename == candidate {
-			return true
+	return releaseCandidateVersionForFilename(filename) != ""
+}
+
+func releaseCandidateVersionForFilename(filename string) string {
+	for version, candidates := range releaseCandidateBinariesByVersion {
+		for _, candidate := range candidates {
+			if filename == candidate {
+				return version
+			}
 		}
 	}
-	return false
+	return ""
 }
 
 var embeddedVersionPattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$`)

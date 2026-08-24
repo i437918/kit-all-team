@@ -497,7 +497,7 @@ func TestAuditArtifacts_RecordsEmbeddedIdentityForAllCandidates(t *testing.T) {
 	root := testutil.TempDir(t)
 	commit := strings.Repeat("a", 40)
 	fixture := buildIdentityFixture(t, root, "v0.1.5", commit)
-	for _, name := range releaseCandidateBinaryNames {
+	for _, name := range releaseCandidateBinariesByVersion["v0.1.5"] {
 		data, err := os.ReadFile(fixture)
 		if err != nil {
 			t.Fatal(err)
@@ -514,13 +514,95 @@ func TestAuditArtifacts_RecordsEmbeddedIdentityForAllCandidates(t *testing.T) {
 	if !report.Passed {
 		t.Fatalf("audit rejected matching candidates: %#v", report.Findings)
 	}
-	if len(report.Binaries) != len(releaseCandidateBinaryNames) {
-		t.Fatalf("candidate identity count = %d, want %d", len(report.Binaries), len(releaseCandidateBinaryNames))
+	if len(report.Binaries) != len(releaseCandidateBinariesByVersion["v0.1.5"]) {
+		t.Fatalf("candidate identity count = %d, want %d", len(report.Binaries), len(releaseCandidateBinariesByVersion["v0.1.5"]))
 	}
 	for _, identity := range report.Binaries {
 		if identity.SHA256 == "" || identity.Version != "v0.1.5" || identity.Commit != commit {
 			t.Fatalf("unexpected candidate identity: %#v", identity)
 		}
+	}
+}
+
+func TestAuditArtifacts_AcceptsOnlyOneCompleteSupportedCandidateSet(t *testing.T) {
+	commit := strings.Repeat("a", 40)
+	tests := []struct {
+		name      string
+		version   string
+		filenames []string
+		passed    bool
+	}{
+		{
+			name:    "v0.1.5 complete",
+			version: "v0.1.5",
+			filenames: []string{
+				"teamkit-v0.1.5-windows-amd64.exe",
+				"teamkit-v0.1.5-linux-amd64",
+				"teamkit-v0.1.5-darwin-amd64",
+				"teamkit-v0.1.5-darwin-arm64",
+			},
+			passed: true,
+		},
+		{
+			name:    "v0.1.6 complete",
+			version: "v0.1.6",
+			filenames: []string{
+				"teamkit-v0.1.6-windows-amd64.exe",
+				"teamkit-v0.1.6-linux-amd64",
+				"teamkit-v0.1.6-darwin-amd64",
+				"teamkit-v0.1.6-darwin-arm64",
+			},
+			passed: true,
+		},
+		{
+			name:    "v0.1.6 incomplete",
+			version: "v0.1.6",
+			filenames: []string{
+				"teamkit-v0.1.6-windows-amd64.exe",
+				"teamkit-v0.1.6-linux-amd64",
+				"teamkit-v0.1.6-darwin-amd64",
+			},
+		},
+		{
+			name:    "mixed versions",
+			version: "v0.1.6",
+			filenames: []string{
+				"teamkit-v0.1.5-windows-amd64.exe",
+				"teamkit-v0.1.5-linux-amd64",
+				"teamkit-v0.1.6-darwin-amd64",
+				"teamkit-v0.1.6-darwin-arm64",
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := testutil.TempDir(t)
+			fixture := buildIdentityFixture(t, root, test.version, commit)
+			for _, filename := range test.filenames {
+				if err := os.WriteFile(filepath.Join(root, filename), mustReadFile(t, fixture), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			report, err := Audit(context.Background(), Options{Paths: []string{root}, Commit: commit})
+			if err != nil {
+				t.Fatalf("Audit: %v", err)
+			}
+			if report.Passed != test.passed {
+				t.Fatalf("Passed = %t, want %t; findings: %#v", report.Passed, test.passed, report.Findings)
+			}
+			if test.passed {
+				if report.Findings == nil || len(report.Findings) != 0 {
+					t.Fatalf("Findings = %#v, want non-nil empty slice", report.Findings)
+				}
+				if len(report.Binaries) != 4 {
+					t.Fatalf("Binaries = %#v, want four identities", report.Binaries)
+				}
+			} else {
+				assertFinding(t, report, "candidate_identity", "missing_binary")
+			}
+		})
 	}
 }
 
@@ -584,8 +666,8 @@ func TestAuditArtifacts_AcceptsTrimpathReleaseScriptIdentity(t *testing.T) {
 	if !report.Passed {
 		t.Fatalf("audit rejected trimpath release candidates: %#v", report.Findings)
 	}
-	if len(report.Binaries) != len(releaseCandidateBinaryNames) {
-		t.Fatalf("candidate identity count = %d, want %d", len(report.Binaries), len(releaseCandidateBinaryNames))
+	if len(report.Binaries) != len(releaseCandidateBinariesByVersion["v0.1.5"]) {
+		t.Fatalf("candidate identity count = %d, want %d", len(report.Binaries), len(releaseCandidateBinariesByVersion["v0.1.5"]))
 	}
 	for _, identity := range report.Binaries {
 		if identity.Version != "v0.1.5" || identity.Commit != commit {
@@ -642,7 +724,7 @@ func TestAuditArtifacts_RejectsMismatchedEmbeddedIdentity(t *testing.T) {
 	commit := strings.Repeat("a", 40)
 	matchingFixture := buildIdentityFixture(t, root, "v0.1.5", commit)
 	mismatchedFixture := buildIdentityFixture(t, root, "v0.1.5", strings.Repeat("b", 40))
-	for index, name := range releaseCandidateBinaryNames {
+	for index, name := range releaseCandidateBinariesByVersion["v0.1.5"] {
 		fixture := matchingFixture
 		if index == 0 {
 			fixture = mismatchedFixture
