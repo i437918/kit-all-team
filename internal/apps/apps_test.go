@@ -2,7 +2,6 @@ package apps
 
 import (
 	"errors"
-	"fmt"
 	"strings"
 	"testing"
 
@@ -43,58 +42,55 @@ func TestPrepareHandoff_RejectsEmptyApplicationID(t *testing.T) {
 	}
 }
 
-func TestPrepareHandoff_EmitsOnePasteReadySecretFreeCommand(t *testing.T) {
+func TestPrepareHandoff_EmitsSelectedImmutableToolchainAndV8StdEndpoint(t *testing.T) {
 	const canary = "do-not-leak-api-key"
-	handoff, err := PrepareHandoff(Application{ID: "codex", Installed: true}, HandoffRequest{
-		Toolchain:     Toolchain{Name: "cc_1c_skills", Version: catalog.Toolchains()[0].Commit},
-		V8StdEndpoint: catalog.V8StdMCP().Endpoint,
-		SecretValues:  []string{canary},
-	})
+	toolchain, err := PinnedToolchain(domain.ToolchainAIRules1C)
 	if err != nil {
-		t.Fatalf("PrepareHandoff() error = %v", err)
+		t.Fatal(err)
 	}
-	if strings.Count(handoff.Command, "\n") != 0 {
-		t.Fatalf("handoff must be one command, got %q", handoff.Command)
+	handoff, err := PrepareHandoff(Application{ID: "codex", Installed: true}, HandoffRequest{Toolchain: toolchain, SecretValues: []string{canary}})
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, want := range []string{"codex", "exactly one toolchain", catalog.Toolchains()[0].Origin, catalog.Toolchains()[0].Commit, "v8std", catalog.V8StdMCP().Endpoint} {
+	for _, want := range []string{
+		"Для установки выбранного набора ai_rules_1c",
+		"https://github.com/comol/ai_rules_1c.git",
+		"f33d2405207cf325f893dc8ca2789157d887db81",
+		"https://ai.v8std.ru/mcp",
+	} {
 		if !strings.Contains(handoff.Command, want) {
-			t.Fatalf("handoff command does not contain %q: %s", want, handoff.Command)
+			t.Fatalf("handoff does not contain %q: %s", want, handoff.Command)
 		}
 	}
-	if strings.Contains(handoff.Command, canary) {
-		t.Fatalf("handoff leaks secret canary: %s", handoff.Command)
+	for _, forbidden := range []string{canary, "https://v8std.ru/mcp/", "default branch", "ветк"} {
+		if strings.Contains(handoff.Command, forbidden) {
+			t.Fatalf("handoff contains forbidden value %q: %s", forbidden, handoff.Command)
+		}
 	}
 }
-
 func TestPrepareHandoff_AllAlternativeApplicationsAndToolchainsAreExclusive(t *testing.T) {
 	const canary = "TEAMKIT_SECRET_CANARY"
-	applications := SupportedApplications()
-	toolchains := catalog.Toolchains()
-	if len(applications) != 10 || len(toolchains) != 2 {
-		t.Fatalf("matrix dimensions = %d applications x %d toolchains, want 10 x 2", len(applications), len(toolchains))
-	}
-	for _, application := range applications {
-		for _, selected := range toolchains {
+	for _, application := range SupportedApplications() {
+		for _, selected := range catalog.Toolchains() {
 			t.Run(string(application)+"/"+string(selected.ID), func(t *testing.T) {
-				got, err := PrepareHandoff(Application{ID: string(application), Installed: true}, HandoffRequest{
-					Toolchain:     Toolchain{Name: string(selected.ID), Origin: selected.Origin, Version: selected.Commit},
-					V8StdEndpoint: catalog.V8StdMCP().Endpoint,
-					SecretValues:  []string{canary},
-				})
+				got, err := PrepareHandoff(Application{ID: string(application), Installed: true}, HandoffRequest{Toolchain: Toolchain{Name: string(selected.ID), Origin: selected.Origin, Version: selected.Commit}, SecretValues: []string{canary}})
 				if err != nil {
 					t.Fatal(err)
 				}
-				want := fmt.Sprintf("In %s, configure exactly one toolchain from %s pinned to commit %s, then configure the separate v8std MCP endpoint %s.", application, selected.Origin, selected.Commit, catalog.V8StdMCP().Endpoint)
-				if got.Command != want {
-					t.Fatalf("handoff=%q want=%q", got.Command, want)
-				}
-				for _, other := range toolchains {
-					if other.ID != selected.ID && (strings.Contains(got.Command, other.Origin) || strings.Contains(got.Command, other.Commit)) {
-						t.Fatalf("unselected toolchain leaked: %q", got.Command)
+				for _, want := range []string{selected.Origin, selected.Commit, "https://ai.v8std.ru/mcp"} {
+					if !strings.Contains(got.Command, want) {
+						t.Fatalf("handoff does not contain selected value %q: %q", want, got.Command)
 					}
 				}
-				if strings.Contains(got.Command, canary) {
-					t.Fatalf("secret leaked: %q", got.Command)
+				for _, forbidden := range []string{canary, "https://v8std.ru/mcp/", "default branch", "ветк"} {
+					if strings.Contains(got.Command, forbidden) {
+						t.Fatalf("handoff contains forbidden value %q: %q", forbidden, got.Command)
+					}
+				}
+				for _, other := range catalog.Toolchains() {
+					if other.ID != selected.ID && (strings.Contains(got.Command, other.Origin) || strings.Contains(got.Command, other.Commit)) {
+						t.Fatalf("unselected toolchain leaked: selected=%s other=%s handoff=%q", selected.ID, other.ID, got.Command)
+					}
 				}
 			})
 		}

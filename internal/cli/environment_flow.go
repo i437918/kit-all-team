@@ -153,7 +153,7 @@ func (r Runner) selectEnvironment(ctx context.Context, q *questionnaire, opts op
 	switch len(discovered.Environments) {
 	case 0:
 		var home string
-		if err := q.askText(ctx, &home, "Введите KIT_ALL_TEAM_HOME"); err != nil {
+		if err := q.askText(ctx, &home, "Введите каталог для проектов"); err != nil {
 			return environment.VerifiedEnvironment{}, err
 		}
 		return r.inspectManualEnvironment(ctx, home)
@@ -167,7 +167,7 @@ func (r Runner) selectEnvironment(ctx context.Context, q *questionnaire, opts op
 		}
 		if selected == manualEnvironmentChoice {
 			var home string
-			if err := q.askText(ctx, &home, "Введите KIT_ALL_TEAM_HOME"); err != nil {
+			if err := q.askText(ctx, &home, "Введите каталог для проектов"); err != nil {
 				return environment.VerifiedEnvironment{}, err
 			}
 			return r.inspectManualEnvironment(ctx, home)

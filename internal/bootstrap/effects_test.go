@@ -312,7 +312,7 @@ func TestEffects_FirstRunFinalizesReadyStateAndSecondObservationIsNoOp(t *testin
 	state := desired(t, home)
 	archive, digest := certificateFixture(t)
 	secretStore := &capturingSecrets{
-		values: map[string]string{hermes.CustomLLMProvider().APIKeyEnvironment: "provider-test-value"},
+		values: map[string]string{hermes.PublicProviderProvider().APIKeyEnvironment: "provider-test-value"},
 		path:   filepath.Join(state.HermesHome(), ".env"),
 	}
 	profileStore := &capturingSecrets{path: filepath.Join(profileDirectory(state), ".env")}
@@ -334,7 +334,7 @@ func TestEffects_FirstRunFinalizesReadyStateAndSecondObservationIsNoOp(t *testin
 		OfficeCLI:          officeCLIFixture(state),
 		CertificateArchive: archive, CertificateSHA256: digest, Secrets: secretStore,
 		ProfileSecrets: profileStore, ProfileEnvironment: map[string]string{
-			hermes.CustomLLMProvider().APIKeyEnvironment: "provider-test-value",
+			hermes.PublicProviderProvider().APIKeyEnvironment: "provider-test-value",
 		}, HermesExecutable: testHermesExecutable(t),
 		InstallHooks: func(path string) error { hookPath = path; return gitx.InstallHooks(path) },
 	}
@@ -363,7 +363,7 @@ func TestEffects_FirstRunFinalizesReadyStateAndSecondObservationIsNoOp(t *testin
 		t.Fatalf("hook path = %q", hookPath)
 	}
 	wantCA := hermes.ApplicationCAEnvironment(filepath.Join(state.HermesHome(), "certs", "ca-bundle.pem"))
-	wantCA[hermes.CustomLLMProvider().APIKeyEnvironment] = "provider-test-value"
+	wantCA[hermes.PublicProviderProvider().APIKeyEnvironment] = "provider-test-value"
 	if !reflect.DeepEqual(secretStore.values, wantCA) {
 		t.Fatalf("CA values = %#v, want %#v", secretStore.values, wantCA)
 	}
@@ -621,7 +621,11 @@ func TestEffects_AlternativeHandoffPersistsExactlyOnePinnedToolchain(t *testing.
 				if err != nil {
 					t.Fatal(err)
 				}
-				wantHandoff := fmt.Sprintf("In %s, configure exactly one toolchain from %s pinned to commit %s, then configure the separate v8std MCP endpoint %s.\n", application, selected.Origin, selected.Commit, catalog.V8StdMCP().Endpoint)
+				want, err := apps.PrepareHandoff(apps.Application{ID: string(application), Installed: true}, apps.HandoffRequest{Toolchain: apps.Toolchain{Name: string(selected.ID), Origin: selected.Origin, Version: selected.Commit}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				wantHandoff := want.Command + "\n"
 				if string(body) != wantHandoff {
 					t.Fatalf("handoff=%q want=%q", body, wantHandoff)
 				}
@@ -810,12 +814,12 @@ func TestEffects_HermesLifecycleCreatesProfileBeforeSkillsAndDoctorsAfterConfigu
 		},
 		ProfileSecrets: profileSecrets,
 		Secrets: &capturingSecrets{
-			values: map[string]string{hermes.CustomLLMProvider().APIKeyEnvironment: "provider-test-value"},
+			values: map[string]string{hermes.PublicProviderProvider().APIKeyEnvironment: "provider-test-value"},
 			path:   filepath.Join(state.HermesHome(), ".env"),
 		},
 		CertificateArchive: archive, CertificateSHA256: digest,
 		ProfileEnvironment: map[string]string{
-			"HERMES_CUSTOM_LLM_API_KEY": "provider-test-value",
+			"TEAMKIT_PUBLIC_PROVIDER_API_KEY": "provider-test-value",
 		},
 		HermesEnvironment: func(home string) error {
 			if home != state.HermesHome() {
@@ -848,7 +852,7 @@ func TestEffects_HermesLifecycleCreatesProfileBeforeSkillsAndDoctorsAfterConfigu
 	if _, err := os.Stat(filepath.Join(state.HermesHome(), "profiles", profileIdentity(state), "config.yaml")); err != nil {
 		t.Fatalf("Hermes config: %v", err)
 	}
-	if profileSecrets.values["HERMES_CUSTOM_LLM_API_KEY"] != "provider-test-value" || len(profileSecrets.values) != 7 {
+	if profileSecrets.values["TEAMKIT_PUBLIC_PROVIDER_API_KEY"] != "provider-test-value" || len(profileSecrets.values) != 7 {
 		t.Fatalf("profile secrets = %#v", profileSecrets.values)
 	}
 	if err := os.MkdirAll(filepath.Join(home, ".git"), 0o700); err != nil {
@@ -898,7 +902,7 @@ func TestEffects_HermesLifecycleOfficeCLIErrorPrecedesProfileSecretsCertificates
 			ensure: func(context.Context) error { return officeErr },
 		},
 		ProfileSecrets:     profileSecrets,
-		ProfileEnvironment: map[string]string{hermes.CustomLLMProvider().APIKeyEnvironment: "must-not-save"},
+		ProfileEnvironment: map[string]string{hermes.PublicProviderProvider().APIKeyEnvironment: "must-not-save"},
 		Secrets:            globalSecrets,
 	}
 	setTestRuntime(t, effects, 34)
@@ -1078,7 +1082,7 @@ func TestEffects_ProfilePublishPreservesConcurrentFinalSentinel(t *testing.T) {
 func TestEffects_HermesProfileEnvironmentIsNormalizedBeforePublish(t *testing.T) {
 	home := testutil.TempDir(t)
 	state := desired(t, home)
-	secret := []byte("HERMES_CUSTOM_LLM_API_KEY=sentinel\n")
+	secret := []byte("TEAMKIT_PUBLIC_PROVIDER_API_KEY=sentinel\n")
 	effects := &Effects{
 		HermesExecutable: testHermesExecutable(t),
 		Git: GitPortFunc{SyncPinnedFunc: func(_ context.Context, _, commit, destination string) error {
@@ -1126,7 +1130,7 @@ func TestEffects_HermesCompatibilityRepairsOwnedLegacyEnvironmentAndMigratesOnce
 		t.Fatal(err)
 	}
 	environment := filepath.Join(profileRoot, ".env")
-	secret := []byte("HERMES_CUSTOM_LLM_API_KEY=legacy-sentinel\n")
+	secret := []byte("TEAMKIT_PUBLIC_PROVIDER_API_KEY=legacy-sentinel\n")
 	if err := os.WriteFile(environment, secret, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -1326,12 +1330,12 @@ func TestEffects_HermesNewProfileKeepsBundledSkillsAndWritesSchema37V8Std(t *tes
 			if err := os.WriteFile(filepath.Join(root, "skills", "learned-user", "SKILL.md"), []byte("learned-sentinel"), 0o600); err != nil {
 				return err
 			}
-			return os.WriteFile(filepath.Join(root, ".env"), []byte("HERMES_CUSTOM_LLM_API_KEY=seed\n"), 0o644)
+			return os.WriteFile(filepath.Join(root, ".env"), []byte("TEAMKIT_PUBLIC_PROVIDER_API_KEY=seed\n"), 0o644)
 		}},
 		ProfileSecrets: profileStore,
 		Secrets:        &capturingSecrets{path: filepath.Join(state.HermesHome(), ".env")},
 		ProfileEnvironment: map[string]string{
-			hermes.CustomLLMProvider().APIKeyEnvironment: "provider-test-value",
+			hermes.PublicProviderProvider().APIKeyEnvironment: "provider-test-value",
 		},
 		CertificateArchive: archive,
 		CertificateSHA256:  digest,
@@ -1603,7 +1607,7 @@ func writeCertificateEnvironmentFixture(t *testing.T, path, bundle string) {
 		t.Fatal(err)
 	}
 	values := hermes.ApplicationCAEnvironment(bundle)
-	values[hermes.CustomLLMProvider().APIKeyEnvironment] = "provider-test-value"
+	values[hermes.PublicProviderProvider().APIKeyEnvironment] = "provider-test-value"
 	keys := make([]string, 0, len(values))
 	for key := range values {
 		keys = append(keys, key)

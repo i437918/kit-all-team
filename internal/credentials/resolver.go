@@ -19,11 +19,11 @@ import (
 
 const (
 	GitLabUsername   = "GITLAB_USERNAME"
-	GitLabToken      = "GITLAB_TOKEN"
+	GitLabToken      = "TEAMKIT_SOURCE_TOKEN"
 	GitCAFile        = "GIT_SSL_CAINFO"
-	CustomLLMAPIKey = "HERMES_CUSTOM_LLM_API_KEY"
-	JiraToken        = "HERMES_CUSTOM_ISSUE_TRACKER_TOKEN"
-	ConfluenceToken  = "HERMES_CUSTOM_KNOWLEDGE_BASE_TOKEN"
+	PublicProviderAPIKey = "TEAMKIT_PUBLIC_PROVIDER_API_KEY"
+	JiraToken        = "TEAMKIT_PUBLIC_ISSUES_KEY"
+	ConfluenceToken  = "TEAMKIT_PUBLIC_WIKI_KEY"
 )
 
 // SecretStore is the minimal application-local persistence boundary.
@@ -60,7 +60,7 @@ type Resolver struct {
 func (r Resolver) Resolve(ctx context.Context, desired domain.DesiredState, interactive bool) (map[string]string, error) {
 	required := []string{GitLabUsername, GitLabToken}
 	if desired.Application() == domain.AppHermes {
-		required = append(required, CustomLLMAPIKey, JiraToken, ConfluenceToken)
+		required = append(required, PublicProviderAPIKey, JiraToken, ConfluenceToken)
 	}
 	return r.resolve(ctx, desired, required, required, interactive)
 }
@@ -87,8 +87,8 @@ func (r Resolver) ResolveForPlan(ctx context.Context, desired domain.DesiredStat
 		load = append(load, GitLabUsername, GitLabToken, GitCAFile)
 	}
 	if providerNeeded {
-		required = append(required, CustomLLMAPIKey, JiraToken, ConfluenceToken)
-		load = append(load, CustomLLMAPIKey, JiraToken, ConfluenceToken)
+		required = append(required, PublicProviderAPIKey, JiraToken, ConfluenceToken)
+		load = append(load, PublicProviderAPIKey, JiraToken, ConfluenceToken)
 	}
 	return r.resolve(ctx, desired, required, load, interactive)
 }

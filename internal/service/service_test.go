@@ -541,18 +541,27 @@ func TestService_HermesRuntimeRejectsObservedDrift(t *testing.T) {
 }
 
 func TestService_HermesRuntimeAcceptsMatchingAndLegacyVersion(t *testing.T) {
-	for _, version := range []string{"0.20.2", ""} {
-		desired, err := domain.NewDesiredState(domain.DesiredStateInput{OS: domain.OSLinux, Application: domain.AppHermes, AppInstalled: true, KitHome: filepath.Join(testutil.TempDir(t), "kit"), HermesHome: filepath.Join(testutil.TempDir(t), "hermes"), HermesVersion: version, Project: domain.ProjectAPA, Role: domain.RoleDeveloper, Toolchain: domain.ToolchainCC1CSkills})
-		if err != nil {
-			t.Fatal(err)
-		}
-		svc := New(Options{ResolveHermesRuntime: func(context.Context, domain.DesiredState) (hermes.DiscoveryResult, error) {
-			return hermes.DiscoveryResult{Installed: true, Home: desired.HermesHome(), Executable: "/verified/hermes", Version: "0.20.2"}, nil
-		}})
-		got, err := svc.hermesExecutable(context.Background(), desired)
-		if err != nil || got != "/verified/hermes" {
-			t.Fatalf("got=%q err=%v", got, err)
-		}
+	for _, test := range []struct {
+		name, desiredVersion, observedVersion, returnedVersion string
+	}{
+		{name: "matching", desiredVersion: "0.20.2", observedVersion: "0.20.2", returnedVersion: "0.20.2"},
+		{name: "legacy backfill", observedVersion: "0.20.2", returnedVersion: "0.20.2"},
+		{name: "unversioned new state"},
+		{name: "unversioned persisted state", desiredVersion: "0.20.2", returnedVersion: "0.20.2"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			desired, err := domain.NewDesiredState(domain.DesiredStateInput{OS: domain.OSLinux, Application: domain.AppHermes, AppInstalled: true, KitHome: filepath.Join(testutil.TempDir(t), "kit"), HermesHome: filepath.Join(testutil.TempDir(t), "hermes"), HermesVersion: test.desiredVersion, Project: domain.ProjectAPA, Role: domain.RoleDeveloper, Toolchain: domain.ToolchainCC1CSkills})
+			if err != nil {
+				t.Fatal(err)
+			}
+			svc := New(Options{ResolveHermesRuntime: func(context.Context, domain.DesiredState) (hermes.DiscoveryResult, error) {
+				return hermes.DiscoveryResult{Installed: true, Home: desired.HermesHome(), Executable: "/verified/hermes", Version: test.observedVersion}, nil
+			}})
+			bound, contract, err := svc.bindHermesRuntime(context.Background(), desired)
+			if err != nil || contract.Info.Executable != "/verified/hermes" || bound.HermesVersion() != test.returnedVersion {
+				t.Fatalf("bound=%#v contract=%#v err=%v", bound, contract, err)
+			}
+		})
 	}
 }
 
@@ -843,9 +852,9 @@ func TestService_HermesEffectInputsScopeThreePersonalKeysToNamedProfile(t *testi
 	_, _ = svc.Apply(context.Background(), desired, reconcile.UpdateNone, cli.ApplyInputs{CertificateArchive: archive, Secrets: map[string]string{
 		credentials.GitLabUsername:   "git-user",
 		credentials.GitLabToken:      "git-secret",
-		credentials.CustomLLMAPIKey: "provider-secret",
-		"HERMES_CUSTOM_ISSUE_TRACKER_TOKEN":                 "jira-secret",
-		"HERMES_CUSTOM_KNOWLEDGE_BASE_TOKEN":           "confluence-secret",
+		credentials.PublicProviderAPIKey: "provider-secret",
+		"TEAMKIT_PUBLIC_ISSUES_KEY":                 "jira-secret",
+		"TEAMKIT_PUBLIC_WIKI_KEY":           "confluence-secret",
 	}})
 	if captured.Profile == nil || captured.ProfileSecrets == nil || captured.OfficeCLI == nil {
 		t.Fatalf("Hermes profile dependencies missing: %#v", captured)
@@ -854,7 +863,7 @@ func TestService_HermesEffectInputsScopeThreePersonalKeysToNamedProfile(t *testi
 		t.Fatalf("Hermes executable = %q", captured.HermesExecutable)
 	}
 	want := map[string]string{
-		credentials.CustomLLMAPIKey: "provider-secret", "HERMES_CUSTOM_ISSUE_TRACKER_TOKEN": "jira-secret", "HERMES_CUSTOM_KNOWLEDGE_BASE_TOKEN": "confluence-secret",
+		credentials.PublicProviderAPIKey: "provider-secret", "TEAMKIT_PUBLIC_ISSUES_KEY": "jira-secret", "TEAMKIT_PUBLIC_WIKI_KEY": "confluence-secret",
 	}
 	if !reflect.DeepEqual(captured.ProfileEnvironment, want) {
 		t.Fatalf("profile environment = %#v, want %#v", captured.ProfileEnvironment, want)
@@ -1349,7 +1358,7 @@ func TestService_RetryReloadsDesiredAndOnlyIncompleteActionSecrets(t *testing.T)
 		t.Fatal(err)
 	}
 	store := &recordingSecretStore{loaded: map[string]string{
-		credentials.CustomLLMAPIKey: "TEAMKIT$SECRET$CANARY$retry", "HERMES_CUSTOM_ISSUE_TRACKER_TOKEN": "jira-retry-secret", "HERMES_CUSTOM_KNOWLEDGE_BASE_TOKEN": "confluence-retry-secret",
+		credentials.PublicProviderAPIKey: "TEAMKIT$SECRET$CANARY$retry", "TEAMKIT_PUBLIC_ISSUES_KEY": "jira-retry-secret", "TEAMKIT_PUBLIC_WIKI_KEY": "confluence-retry-secret",
 	}}
 	var applied domain.DesiredState
 	var captured EffectInputs
@@ -1386,11 +1395,11 @@ func TestService_RetryReloadsDesiredAndOnlyIncompleteActionSecrets(t *testing.T)
 	if err := svc.Retry(context.Background(), root); err != nil {
 		t.Fatalf("Retry: %v", err)
 	}
-	if !reflect.DeepEqual(store.loadKeys, []string{credentials.CustomLLMAPIKey, "HERMES_CUSTOM_ISSUE_TRACKER_TOKEN", "HERMES_CUSTOM_KNOWLEDGE_BASE_TOKEN"}) {
+	if !reflect.DeepEqual(store.loadKeys, []string{credentials.PublicProviderAPIKey, "TEAMKIT_PUBLIC_ISSUES_KEY", "TEAMKIT_PUBLIC_WIKI_KEY"}) {
 		t.Fatalf("loaded keys=%#v", store.loadKeys)
 	}
 	wantEnvironment := map[string]string{
-		credentials.CustomLLMAPIKey: "TEAMKIT$SECRET$CANARY$retry", "HERMES_CUSTOM_ISSUE_TRACKER_TOKEN": "jira-retry-secret", "HERMES_CUSTOM_KNOWLEDGE_BASE_TOKEN": "confluence-retry-secret",
+		credentials.PublicProviderAPIKey: "TEAMKIT$SECRET$CANARY$retry", "TEAMKIT_PUBLIC_ISSUES_KEY": "jira-retry-secret", "TEAMKIT_PUBLIC_WIKI_KEY": "confluence-retry-secret",
 	}
 	if !reflect.DeepEqual(captured.ProfileEnvironment, wantEnvironment) {
 		t.Fatalf("retry profile environment=%#v, want %#v", captured.ProfileEnvironment, wantEnvironment)
@@ -1424,7 +1433,7 @@ func TestServiceRetry_LegacyDACLFailureRepairsOwnedProfileAndCompletesAction50(t
 		t.Fatal(err)
 	}
 	environment := filepath.Join(profileRoot, ".env")
-	if err := os.WriteFile(environment, []byte(credentials.CustomLLMAPIKey+"=old-value\n"), 0o644); err != nil {
+	if err := os.WriteFile(environment, []byte(credentials.PublicProviderAPIKey+"=old-value\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chmod(environment, 0o644); err != nil {
@@ -1494,7 +1503,7 @@ func TestServiceRetry_LegacyDACLFailureRepairsOwnedProfileAndCompletesAction50(t
 
 	optInCalls := 0
 	appStore := &recordingSecretStore{loaded: map[string]string{
-		credentials.CustomLLMAPIKey: "new-provider-value", credentials.JiraToken: "new-jira-value", credentials.ConfluenceToken: "new-confluence-value",
+		credentials.PublicProviderAPIKey: "new-provider-value", credentials.JiraToken: "new-jira-value", credentials.ConfluenceToken: "new-confluence-value",
 	}}
 	svc := New(Options{
 		OperationContract: func(domain.DesiredState) (string, error) { return operationContract, nil },
@@ -1812,7 +1821,7 @@ func TestService_RetryRejectsEmptyConfigureCredentialBeforeAskPassOrEffects(t *t
 	}
 
 	store := &recordingSecretStore{loaded: map[string]string{
-		credentials.CustomLLMAPIKey: " \t ",
+		credentials.PublicProviderAPIKey: " \t ",
 	}}
 	askPassCalls, effectCalls := 0, 0
 	svc := New(Options{
@@ -1832,7 +1841,7 @@ func TestService_RetryRejectsEmptyConfigureCredentialBeforeAskPassOrEffects(t *t
 	})
 
 	err = svc.Retry(context.Background(), root)
-	want := "CREDENTIALS_REQUIRED: " + credentials.CustomLLMAPIKey + ",HERMES_CUSTOM_ISSUE_TRACKER_TOKEN,HERMES_CUSTOM_KNOWLEDGE_BASE_TOKEN"
+	want := "CREDENTIALS_REQUIRED: " + credentials.PublicProviderAPIKey + ",TEAMKIT_PUBLIC_ISSUES_KEY,TEAMKIT_PUBLIC_WIKI_KEY"
 	if err == nil || err.Error() != want {
 		t.Fatalf("Retry() error = %v, want %q", err, want)
 	}
@@ -2416,6 +2425,10 @@ func TestService_WindowsMissingHermesFailsClosedUntilInstallDirectoryIsVerified(
 	if !strings.Contains(err.Error(), "install Hermes manually") || !strings.Contains(err.Error(), "--app-installed=true") {
 		t.Fatalf("error is not actionable: %v", err)
 	}
+	if strings.Contains(err.Error(), "HERMES_HOME") {
+		t.Fatalf("missing Hermes must not require HERMES_HOME: %v", err)
+	}
+
 }
 
 func TestService_POSIXInstallerCopiesExplicitInputToPrivateCache(t *testing.T) {

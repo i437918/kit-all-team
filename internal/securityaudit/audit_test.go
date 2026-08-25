@@ -8,10 +8,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	teamkitbuildinfo "github.com/mi1man-cmd/kit-all-team/internal/buildinfo"
 	"github.com/mi1man-cmd/kit-all-team/internal/testutil"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -40,7 +42,7 @@ func TestAuditRepository_FindsForbiddenTrackedPathAndDeletedHistorySecret(t *tes
 		t.Fatal("audit passed with a forbidden path and historical secret")
 	}
 	assertFinding(t, report, "tracked_paths", "forbidden_path")
-	assertFinding(t, report, "git_history", "gitlab_token")
+	assertFinding(t, report, "git_history", "source_access_token")
 	assertReportDoesNotReveal(t, report, secret)
 }
 
@@ -74,7 +76,7 @@ func TestAuditRepository_ScansReachableCommitAndAnnotatedTagMessages(t *testing.
 	if report.Passed {
 		t.Fatal("audit skipped secrets in reachable commit and annotated tag messages")
 	}
-	assertFinding(t, report, "git_history", "gitlab_token")
+	assertFinding(t, report, "git_history", "source_access_token")
 	assertFinding(t, report, "git_history", "github_token")
 	assertReportDoesNotReveal(t, report, commitSecret)
 	assertReportDoesNotReveal(t, report, tagSecret)
@@ -237,7 +239,7 @@ func TestAuditRepository_ReleaseHistoryScopeIgnoresUnrelatedRefs(t *testing.T) {
 	if defaultReport.HistoryScope != "all_refs" {
 		t.Fatalf("repository-wide audit reported history scope %q", defaultReport.HistoryScope)
 	}
-	assertFinding(t, defaultReport, "git_history", "gitlab_token")
+	assertFinding(t, defaultReport, "git_history", "source_access_token")
 
 	first, err := Audit(context.Background(), Options{Repository: firstRoot, Commit: commit, HistoryRef: commit})
 	if err != nil {
@@ -294,7 +296,7 @@ func TestAuditCleanInputs_EmitsDeterministicMachineReadableEvidence(t *testing.T
 
 func TestAuditArtifacts_DoesNotTreatEnvironmentVariableNamesAsSecretValues(t *testing.T) {
 	root := testutil.TempDir(t)
-	writeFile(t, filepath.Join(root, "source.go"), `const CustomLLMAPIKey = "HERMES_CUSTOM_LLM_API_KEY"`)
+	writeFile(t, filepath.Join(root, "source.go"), `const PublicProviderAPIKey = "TEAMKIT_PUBLIC_PROVIDER_API_KEY"`)
 
 	report, err := Audit(context.Background(), Options{Paths: []string{root}})
 	if err != nil {
@@ -489,4 +491,355 @@ func writeTarGz(t *testing.T, path, name, contents string) {
 		t.Fatal(err)
 	}
 	writeFile(t, path, buffer.String())
+}
+
+func TestAuditArtifacts_RecordsEmbeddedIdentityForAllCandidates(t *testing.T) {
+	root := testutil.TempDir(t)
+	commit := strings.Repeat("a", 40)
+	fixture := buildIdentityFixture(t, root, "v0.1.5", commit)
+	for _, name := range releaseCandidateBinariesByVersion["v0.1.5"] {
+		data, err := os.ReadFile(fixture)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, name), data, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	report, err := Audit(context.Background(), Options{Paths: []string{root}, Commit: commit})
+	if err != nil {
+		t.Fatalf("Audit: %v", err)
+	}
+	if !report.Passed {
+		t.Fatalf("audit rejected matching candidates: %#v", report.Findings)
+	}
+	if len(report.Binaries) != len(releaseCandidateBinariesByVersion["v0.1.5"]) {
+		t.Fatalf("candidate identity count = %d, want %d", len(report.Binaries), len(releaseCandidateBinariesByVersion["v0.1.5"]))
+	}
+	for _, identity := range report.Binaries {
+		if identity.SHA256 == "" || identity.Version != "v0.1.5" || identity.Commit != commit {
+			t.Fatalf("unexpected candidate identity: %#v", identity)
+		}
+	}
+}
+
+func TestAuditArtifacts_AcceptsOnlyOneCompleteSupportedCandidateSet(t *testing.T) {
+	commit := strings.Repeat("a", 40)
+	tests := []struct {
+		name      string
+		version   string
+		filenames []string
+		passed    bool
+	}{
+		{
+			name:    "v0.1.5 complete",
+			version: "v0.1.5",
+			filenames: []string{
+				"teamkit-v0.1.5-windows-amd64.exe",
+				"teamkit-v0.1.5-linux-amd64",
+				"teamkit-v0.1.5-darwin-amd64",
+				"teamkit-v0.1.5-darwin-arm64",
+			},
+			passed: true,
+		},
+		{
+			name:    "v0.1.6 complete",
+			version: "v0.1.6",
+			filenames: []string{
+				"teamkit-v0.1.6-windows-amd64.exe",
+				"teamkit-v0.1.6-linux-amd64",
+				"teamkit-v0.1.6-darwin-amd64",
+				"teamkit-v0.1.6-darwin-arm64",
+			},
+			passed: true,
+		},
+		{
+			name:    "v0.1.6 incomplete",
+			version: "v0.1.6",
+			filenames: []string{
+				"teamkit-v0.1.6-windows-amd64.exe",
+				"teamkit-v0.1.6-linux-amd64",
+				"teamkit-v0.1.6-darwin-amd64",
+			},
+		},
+		{
+			name:    "mixed versions",
+			version: "v0.1.6",
+			filenames: []string{
+				"teamkit-v0.1.5-windows-amd64.exe",
+				"teamkit-v0.1.5-linux-amd64",
+				"teamkit-v0.1.6-darwin-amd64",
+				"teamkit-v0.1.6-darwin-arm64",
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := testutil.TempDir(t)
+			fixture := buildIdentityFixture(t, root, test.version, commit)
+			for _, filename := range test.filenames {
+				if err := os.WriteFile(filepath.Join(root, filename), mustReadFile(t, fixture), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			report, err := Audit(context.Background(), Options{Paths: []string{root}, Commit: commit})
+			if err != nil {
+				t.Fatalf("Audit: %v", err)
+			}
+			if report.Passed != test.passed {
+				t.Fatalf("Passed = %t, want %t; findings: %#v", report.Passed, test.passed, report.Findings)
+			}
+			if test.passed {
+				if report.Findings == nil || len(report.Findings) != 0 {
+					t.Fatalf("Findings = %#v, want non-nil empty slice", report.Findings)
+				}
+				if len(report.Binaries) != 4 {
+					t.Fatalf("Binaries = %#v, want four identities", report.Binaries)
+				}
+			} else {
+				assertFinding(t, report, "candidate_identity", "missing_binary")
+			}
+		})
+	}
+}
+
+func TestAuditArtifacts_AcceptsTrimpathReleaseScriptIdentity(t *testing.T) {
+	script := "scripts/build.sh"
+	var command []string
+	if runtime.GOOS == "windows" {
+		pwsh, err := exec.LookPath("pwsh")
+		if err != nil {
+			t.Skip("pwsh is required to run the Windows release build script")
+		}
+		script = "scripts/build.ps1"
+		command = []string{pwsh, "-NoProfile", "-File", script, "-Version", "v0.1.5", "-OutputDir", "dist"}
+	} else {
+		bash, err := exec.LookPath("bash")
+		if err != nil {
+			t.Skip("bash is required to run the release build script")
+		}
+		command = []string{bash, script, "v0.1.5", "dist"}
+	}
+
+	root := testutil.TempDir(t)
+	commit := strings.Repeat("a", 40)
+	source := filepath.Join(root, "source")
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate security-audit test source")
+	}
+	repositoryRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
+	copyReleaseBuildFixture(t, repositoryRoot, source)
+	git(t, source, "init", "-q")
+	git(t, source, "config", "core.autocrlf", "false")
+	git(t, source, "config", "user.email", "fixture@example.invalid")
+	git(t, source, "config", "user.name", "release fixture")
+	git(t, source, "add", ".")
+	git(t, source, "commit", "-m", "fixture release build")
+	status := exec.Command("git", "status", "--porcelain", "--untracked-files=all")
+	status.Dir = source
+	statusOutput, err := status.CombinedOutput()
+	if err != nil {
+		t.Fatalf("read fixture source status: %v\n%s", err, statusOutput)
+	}
+	if strings.TrimSpace(string(statusOutput)) != "" {
+		t.Fatalf("fixture source must be clean before release build: %s", statusOutput)
+	}
+
+	build := exec.Command(command[0], command[1:]...)
+	build.Dir = source
+	build.Env = append(os.Environ(),
+		"TEAMKIT_SOURCE_REVISION="+commit,
+		"TEAMKIT_SOURCE_COMMIT_TIME=2026-08-23T00:00:00Z",
+	)
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build trimpath release candidates: %v\n%s", err, output)
+	}
+
+	report, err := Audit(context.Background(), Options{Paths: []string{filepath.Join(source, "dist")}, Commit: commit})
+	if err != nil {
+		t.Fatalf("Audit: %v", err)
+	}
+	if !report.Passed {
+		t.Fatalf("audit rejected trimpath release candidates: %#v", report.Findings)
+	}
+	if len(report.Binaries) != len(releaseCandidateBinariesByVersion["v0.1.5"]) {
+		t.Fatalf("candidate identity count = %d, want %d", len(report.Binaries), len(releaseCandidateBinariesByVersion["v0.1.5"]))
+	}
+	for _, identity := range report.Binaries {
+		if identity.Version != "v0.1.5" || identity.Commit != commit {
+			t.Fatalf("unexpected trimpath candidate identity: %#v", identity)
+		}
+	}
+}
+func copyReleaseBuildFixture(t *testing.T, sourceRoot, destinationRoot string) {
+	t.Helper()
+	err := filepath.WalkDir(sourceRoot, func(source string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relative, err := filepath.Rel(sourceRoot, source)
+		if err != nil {
+			return err
+		}
+		if relative == "." {
+			return nil
+		}
+		first, _, _ := strings.Cut(relative, string(filepath.Separator))
+		if first == ".git" || first == ".teamkit" || first == "dist" {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		destination := filepath.Join(destinationRoot, relative)
+		if entry.IsDir() {
+			return os.MkdirAll(destination, 0o700)
+		}
+		if !entry.Type().IsRegular() {
+			return fmt.Errorf("unsupported fixture source entry %q", relative)
+		}
+		data, err := os.ReadFile(source)
+		if err != nil {
+			return err
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
+			return err
+		}
+		return os.WriteFile(destination, data, info.Mode().Perm())
+	})
+	if err != nil {
+		t.Fatalf("copy release build fixture: %v", err)
+	}
+}
+func TestAuditArtifacts_RejectsMismatchedEmbeddedIdentity(t *testing.T) {
+	root := testutil.TempDir(t)
+	commit := strings.Repeat("a", 40)
+	matchingFixture := buildIdentityFixture(t, root, "v0.1.5", commit)
+	mismatchedFixture := buildIdentityFixture(t, root, "v0.1.5", strings.Repeat("b", 40))
+	for index, name := range releaseCandidateBinariesByVersion["v0.1.5"] {
+		fixture := matchingFixture
+		if index == 0 {
+			fixture = mismatchedFixture
+		}
+		if err := os.WriteFile(filepath.Join(root, name), mustReadFile(t, fixture), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	report, err := Audit(context.Background(), Options{Paths: []string{root}, Commit: commit})
+	if err != nil {
+		t.Fatalf("Audit: %v", err)
+	}
+	if report.Passed {
+		t.Fatal("audit accepted a candidate whose embedded commit differs from the canonical revision")
+	}
+	assertFinding(t, report, "candidate_identity", "embedded_commit")
+}
+
+func TestEmbeddedCandidateIdentity_RequiresOneTerminatedCandidateMarker(t *testing.T) {
+	commit := strings.Repeat("a", 40)
+	marker := teamkitbuildinfo.EmbeddedIdentityPrefix
+	valid := marker + "v0.1.5:" + commit + "\x00"
+
+	tests := []struct {
+		name string
+		data string
+	}{
+		{
+			name: "trailing hexadecimal data",
+			data: marker + "v0.1.5:" + commit + "a",
+		},
+		{
+			name: "trailing non hexadecimal data",
+			data: marker + "v0.1.5:" + commit + "suffix",
+		},
+		{
+			name: "conflicting candidate markers",
+			data: valid + marker + "v0.1.5:" + strings.Repeat("b", 40) + "\x00",
+		},
+		{
+			name: "duplicate candidate markers",
+			data: valid + valid,
+		},
+		{
+			name: "malformed extra marker",
+			data: valid + marker + "not-a-release-identity",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			version, foundCommit := embeddedCandidateIdentity([]byte(test.data))
+			if version != "" || foundCommit != "" {
+				t.Fatalf("embeddedCandidateIdentity() = (%q, %q), want no identity", version, foundCommit)
+			}
+		})
+	}
+}
+
+func TestEmbeddedCandidateIdentity_AcceptsTerminatedCandidateMarkerWithLinkerDefault(t *testing.T) {
+	commit := strings.Repeat("a", 40)
+	data := teamkitbuildinfo.EmbeddedIdentityPrefix + "dev:unknownadjacent-static-data" +
+		teamkitbuildinfo.EmbeddedIdentityPrefix + "v0.1.5:" + commit + "\x00"
+
+	version, foundCommit := embeddedCandidateIdentity([]byte(data))
+	if version != "v0.1.5" || foundCommit != commit {
+		t.Fatalf("embeddedCandidateIdentity() = (%q, %q), want (%q, %q)", version, foundCommit, "v0.1.5", commit)
+	}
+}
+func buildIdentityFixture(t *testing.T, directory, version, commit string) string {
+	t.Helper()
+	root := filepath.Clean(filepath.Join("..", ".."))
+	fixture := filepath.Join(directory, "teamkit-fixture")
+	flags := "-X github.com/mi1man-cmd/kit-all-team/internal/buildinfo.version=" + version + " -X github.com/mi1man-cmd/kit-all-team/internal/buildinfo.commit=" + commit + " -X github.com/mi1man-cmd/kit-all-team/internal/buildinfo.identity=" + "teamkit-build-identity-v1:" + version + ":" + commit
+	command := exec.Command("go", "build", "-buildvcs=false", "-trimpath", "-ldflags", flags, "-o", fixture, "./cmd/teamkit")
+	command.Dir = root
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("build identity fixture: %v\n%s", err, output)
+	}
+	return fixture
+}
+
+func mustReadFile(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+func TestAuditRepository_PublicHistoryRecordsDistinctCanonicalIdentity(t *testing.T) {
+	root := newGitRepository(t)
+	publicRevision := gitOutput(t, root, "rev-parse", "HEAD")
+	canonicalRevision := strings.Repeat("c", 40)
+	if canonicalRevision == publicRevision {
+		t.Fatal("fixture must exercise two distinct revisions")
+	}
+
+	report, err := Audit(context.Background(), Options{
+		Repository: root,
+		Commit:     canonicalRevision,
+		HistoryRef: publicRevision,
+	})
+	if err != nil {
+		t.Fatalf("Audit two-SHA candidate: %v", err)
+	}
+	if !report.Passed {
+		t.Fatalf("two-SHA candidate audit failed: %#v", report.Findings)
+	}
+	if report.Commit != canonicalRevision {
+		t.Fatalf("canonical commit = %q, want %q", report.Commit, canonicalRevision)
+	}
+	if report.HistoryRevision != publicRevision {
+		t.Fatalf("audited public history revision = %q, want %q", report.HistoryRevision, publicRevision)
+	}
 }

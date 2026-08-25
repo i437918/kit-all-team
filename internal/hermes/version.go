@@ -20,7 +20,8 @@ const (
 
 var (
 	ErrVersionUnsupported = errors.New("HERMES_VERSION_UNSUPPORTED")
-	versionLinePattern    = regexp.MustCompile(`^Hermes Agent v([0-9]+)\.([0-9]+)\.([0-9]+) \([^\r\n()]+\)$`)
+	versionLinePattern    = regexp.MustCompile(`^Hermes Agent v([0-9]+)\.([0-9]+)\.([0-9]+) \([^\r\n()]+\)(?: · upstream [0-9a-f]+ · local [0-9a-f]+ \(\+[1-9][0-9]* carried commits?\))?$`)
+	updateAvailableLine   = regexp.MustCompile(`^Update available: [1-9][0-9]* commits? behind — run 'hermes update'$`)
 )
 
 type RuntimeInfo struct {
@@ -88,7 +89,7 @@ func ParseRuntimeInfo(executable string, output []byte) (RuntimeInfo, error) {
 		return RuntimeInfo{}, ErrExecutableUnverified
 	}
 	index++
-	if lines[index] != "Run 'hermes version' for update status." {
+	if lines[index] != "Run 'hermes version' for update status." && !updateAvailableLine.MatchString(lines[index]) {
 		return RuntimeInfo{}, ErrExecutableUnverified
 	}
 	return RuntimeInfo{Executable: cleanExecutable, InstallDir: cleanInstall, Version: fmt.Sprintf("%d.%d.%d", version.major, version.minor, version.patch)}, nil

@@ -36,6 +36,25 @@ func TestParseRuntimeInfo_AcceptsSupportedRange(t *testing.T) {
 	}
 }
 
+func TestParseRuntimeInfo_AcceptsGitBuildMetadataAndUpdateAvailability(t *testing.T) {
+	path := filepath.Join(testutil.TempDir(t), "install", "venv", "bin", "hermes")
+	if runtime.GOOS == "windows" {
+		path = filepath.Join(testutil.TempDir(t), "install", "venv", "Scripts", "hermes.exe")
+	}
+	installRoot := filepath.Dir(filepath.Dir(filepath.Dir(path)))
+	output := []byte("Hermes Agent v0.20.5 (2026.8.19) · upstream 6ed8bcee · local 706f33d4 (+1 carried commit)\n" +
+		"Install directory: " + installRoot + "\n" +
+		"Install method: git\n" +
+		"Python: 3.11.15\n" +
+		"OpenAI SDK: 2.24.0\n" +
+		"Update available: 233 commits behind — run 'hermes update'\n")
+
+	got, err := ParseRuntimeInfo(path, output)
+	if err != nil || got.Version != "0.20.5" || got.Executable != path || got.InstallDir != installRoot {
+		t.Fatalf("ParseRuntimeInfo() = %#v, %v", got, err)
+	}
+}
+
 func TestParseRuntimeInfo_RejectsUnsupportedVersions(t *testing.T) {
 	path := filepath.Join(testutil.TempDir(t), "install", "venv", "bin", "hermes")
 	if runtime.GOOS == "windows" {
@@ -138,25 +157,6 @@ func TestParseRuntimeInfo_RejectsControlBytes(t *testing.T) {
 				t.Fatalf("err=%v", err)
 			}
 		})
-	}
-}
-
-func TestVerifyRuntimeContract_RejectsCapabilitySubstringFalsePositive(t *testing.T) {
-	_, path := writeRuntimeFixture(t, runtimeConfigSchema34, []string{"github"})
-	_, err := VerifyRuntimeContract(context.Background(), path, func(_ context.Context, _ string, args []string) ([]byte, error) {
-		switch strings.Join(args, " ") {
-		case "--version":
-			return runtimeOutput(path, "0.20.2"), nil
-		case "profile create --help":
-			return []byte("--no-aliasing"), nil
-		case "skills opt-in --help":
-			return []byte("--sync"), nil
-		default:
-			return nil, errors.New("unexpected probe")
-		}
-	})
-	if !errors.Is(err, ErrExecutableUnverified) {
-		t.Fatalf("err=%v", err)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -56,16 +57,15 @@ type openedInstallRoot interface {
 }
 
 // runtimeExecutablePin keeps a native no-follow executable handle alive while
-// command probes run. The command API is path based, so every probe is bounded
-// by a fresh path-to-handle identity comparison against this retained handle.
+// the runtime contract is verified. Every root check is bounded by a fresh
+// path-to-handle identity comparison against this retained handle.
 type runtimeExecutablePin interface {
 	Key() string
 	VerifyPath() error
 	Close() error
 }
 
-// Test seam for a replacement after the final subprocess probe but before the
-// installation root is acquired.
+// Test seam for a replacement before the installation root is acquired.
 var beforeRuntimeRootOpen = func() {}
 var afterRuntimeSchemaProbe = func(openedInstallRoot) {}
 
@@ -119,37 +119,18 @@ var defaultBundledInventoryLimits = bundledInventoryLimits{
 	MaxBytes: 16 << 20, MaxFrontmatterBytes: 64 << 10,
 }
 
-// VerifyRuntimeContract proves the installed Hermes executable, the current
-// profile commands, configuration schema, and bundled skills from one stable
-// no-follow installation root.
+// VerifyRuntimeContract proves the installed Hermes executable, configuration
+// schema, and bundled skills from one stable no-follow installation root.
 func VerifyRuntimeContract(ctx context.Context, executable string, capture executableCapture) (RuntimeContract, error) {
-	if capture == nil {
-		return RuntimeContract{}, ErrExecutableUnverified
-	}
-	absolute, err := filepath.Abs(executable)
+	info, err := runtimeInfoFromExecutableLayout(executable)
 	if err != nil {
-		return RuntimeContract{}, ErrExecutableUnverified
+		return RuntimeContract{}, err
 	}
-	absolute = filepath.Clean(absolute)
-	pin, err := pinRuntimeExecutable(absolute)
+	pin, err := pinRuntimeExecutable(info.Executable)
 	if err != nil {
 		return RuntimeContract{}, ErrExecutableUnverified
 	}
 	defer pin.Close()
-	checkedCapture := func(probeCtx context.Context, name string, args []string) ([]byte, error) {
-		if err := pin.VerifyPath(); err != nil {
-			return nil, ErrExecutableUnverified
-		}
-		data, captureErr := capture(probeCtx, name, args)
-		if err := pin.VerifyPath(); err != nil {
-			return nil, ErrExecutableUnverified
-		}
-		return data, captureErr
-	}
-	info, err := VerifyExecutable(ctx, absolute, checkedCapture)
-	if err != nil {
-		return RuntimeContract{}, err
-	}
 	if err := pathsafe.ValidateDirectory(info.InstallDir); err != nil {
 		return RuntimeContract{}, fmt.Errorf("%w: install root is unsafe", ErrExecutableUnverified)
 	}
@@ -158,12 +139,6 @@ func VerifyRuntimeContract(ctx context.Context, executable string, capture execu
 	}
 	if err := pathsafe.ValidateRegular(info.Executable); err != nil {
 		return RuntimeContract{}, fmt.Errorf("%w: executable is unsafe", ErrExecutableUnverified)
-	}
-	if err := verifyCapability(ctx, info.Executable, checkedCapture, []string{"profile", "create", "--help"}, "--no-alias"); err != nil {
-		return RuntimeContract{}, err
-	}
-	if err := verifyCapability(ctx, info.Executable, checkedCapture, []string{"skills", "opt-in", "--help"}, "--sync"); err != nil {
-		return RuntimeContract{}, err
 	}
 	beforeRuntimeRootOpen()
 	root, err := openVerifiedInstallRoot(info)
@@ -193,24 +168,27 @@ func VerifyRuntimeContract(ctx context.Context, executable string, capture execu
 	}, nil
 }
 
-func verifyCapability(ctx context.Context, executable string, capture executableCapture, args []string, marker string) error {
-	if capture == nil {
-		return ErrExecutableUnverified
+func runtimeInfoFromExecutableLayout(executable string) (RuntimeInfo, error) {
+	absolute, err := filepath.Abs(executable)
+	if err != nil {
+		return RuntimeInfo{}, ErrExecutableUnverified
 	}
-	data, err := capture(ctx, executable, args)
-	if err != nil || len(data) == 0 || len(data) > maxVersionOutputBytes || !utf8.Valid(data) || !validCapabilityToken(data, marker) {
-		return fmt.Errorf("%w: required capability missing", ErrExecutableUnverified)
+	absolute = filepath.Clean(absolute)
+	installDir := filepath.Dir(filepath.Dir(filepath.Dir(absolute)))
+	relative, err := filepath.Rel(installDir, absolute)
+	if err != nil {
+		return RuntimeInfo{}, ErrExecutableUnverified
 	}
-	return nil
-}
-
-func validCapabilityToken(data []byte, marker string) bool {
-	for _, token := range strings.Fields(string(data)) {
-		if strings.Trim(token, " ,:;[]()") == marker {
-			return true
+	expected := filepath.Join("venv", "bin", "hermes")
+	if runtime.GOOS == "windows" {
+		expected = filepath.Join("venv", "Scripts", "hermes.exe")
+		if !strings.EqualFold(relative, expected) {
+			return RuntimeInfo{}, ErrExecutableUnverified
 		}
+	} else if relative != expected {
+		return RuntimeInfo{}, ErrExecutableUnverified
 	}
-	return false
+	return RuntimeInfo{Executable: absolute, InstallDir: installDir}, nil
 }
 
 func probeConfigSchema(ctx context.Context, root openedInstallRoot) (int, error) {
@@ -484,6 +462,9 @@ func inventoryBundledSkillsAndDigest(ctx context.Context, root openedInstallRoot
 	found, err := root.WalkBundledSkills(ctx, defaultBundledInventoryLimits)
 	if err != nil {
 		return nil, "", fmt.Errorf("%w: bundled skills cannot be inventoried", ErrBundledSkillsCatalogUnverified)
+	}
+	if len(found) == 0 {
+		return nil, "", ErrBundledSkillsCatalogUnverified
 	}
 	if err := verifyBundledManifest(ctx, root, found); err != nil {
 		return nil, "", fmt.Errorf("%w: bundled manifest cannot be verified", ErrBundledSkillsCatalogUnverified)

@@ -69,7 +69,7 @@ var errKitHomeMismatch = errors.New("KIT_HOME_MISMATCH")
 
 // ErrWindowsHermesInstallUnverified prevents unattended execution until the
 // pinned EXE's exact install-directory contract has disposable-runner evidence.
-var ErrWindowsHermesInstallUnverified = errors.New("HERMES_WINDOWS_INSTALL_DIR_UNVERIFIED: install Hermes manually, set HERMES_HOME to its verified installation directory, then rerun with --app-installed=true")
+var ErrWindowsHermesInstallUnverified = errors.New("HERMES_REQUIRED: install Hermes manually, then rerun Team Kit with --app-installed=true")
 
 // ErrHomeOverlap prevents project content and private application state from
 // sharing the same filesystem tree in either nesting direction.
@@ -751,7 +751,7 @@ func (s *Service) mutationWithStoreExecutable(desired domain.DesiredState, input
 			return engine.Engine{}, nil, err
 		}
 		profileEnvironment = map[string]string{
-			credentials.CustomLLMAPIKey: values[credentials.CustomLLMAPIKey],
+			credentials.PublicProviderAPIKey: values[credentials.PublicProviderAPIKey],
 			credentials.JiraToken:        values[credentials.JiraToken],
 			credentials.ConfluenceToken:  values[credentials.ConfluenceToken],
 		}
@@ -1037,7 +1037,7 @@ func requiredSecretKeys(desired domain.DesiredState, actions []reconcile.Action)
 		keys = append(keys, credentials.GitLabUsername, credentials.GitLabToken, GitCAFile)
 	}
 	if providerRequired {
-		keys = append(keys, credentials.CustomLLMAPIKey, credentials.JiraToken, credentials.ConfluenceToken)
+		keys = append(keys, credentials.PublicProviderAPIKey, credentials.JiraToken, credentials.ConfluenceToken)
 	}
 	return keys
 }
@@ -1512,7 +1512,11 @@ func (s *Service) bindHermesRuntime(ctx context.Context, desired domain.DesiredS
 	if err != nil {
 		return domain.DesiredState{}, hermes.RuntimeContract{}, err
 	}
-	executable, err := validateVerifiedHermesRuntime(desired, observed, desired.HermesVersion())
+	requiredVersion := desired.HermesVersion()
+	if observed.Version == "" {
+		requiredVersion = ""
+	}
+	executable, err := validateVerifiedHermesRuntime(desired, observed, requiredVersion)
 	if err != nil {
 		return domain.DesiredState{}, hermes.RuntimeContract{}, err
 	}
@@ -1527,11 +1531,8 @@ func (s *Service) bindHermesRuntime(ctx context.Context, desired domain.DesiredS
 	if contract.Info.Executable != executable || contract.Info.Version != observed.Version || contract.ConfigSchema != 34 && contract.ConfigSchema != 37 {
 		return domain.DesiredState{}, hermes.RuntimeContract{}, fmt.Errorf("HERMES_RUNTIME_DRIFT: runtime contract is missing or inconsistent")
 	}
-	if desired.HermesVersion() != "" {
+	if observed.Version == "" || desired.HermesVersion() != "" {
 		return desired, contract, nil
-	}
-	if strings.TrimSpace(observed.Version) == "" {
-		return domain.DesiredState{}, hermes.RuntimeContract{}, fmt.Errorf("HERMES_RUNTIME_DRIFT: observed version is missing")
 	}
 	bound, err := domain.NewDesiredState(domain.DesiredStateInput{
 		OS:            desired.OS(),

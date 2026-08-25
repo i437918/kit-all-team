@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestConsoleReaderUsesRussianCredentialLabels(t *testing.T) {
+func TestConsoleReaderWarnsThatCredentialInputIsVisible(t *testing.T) {
 	input, writer, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -22,18 +22,18 @@ func TestConsoleReaderUsesRussianCredentialLabels(t *testing.T) {
 
 	var output bytes.Buffer
 	reader := NewConsoleReader(input, &output)
-	for _, key := range []string{GitLabUsername, GitLabToken, CustomLLMAPIKey, "HERMES_CUSTOM_ISSUE_TRACKER_TOKEN", "HERMES_CUSTOM_KNOWLEDGE_BASE_TOKEN"} {
+	for _, key := range []string{GitLabUsername, GitLabToken, PublicProviderAPIKey, "TEAMKIT_PUBLIC_ISSUES_KEY", "TEAMKIT_PUBLIC_WIKI_KEY"} {
 		if _, err := reader.ReadSecret(key); err != nil {
 			t.Fatal(err)
 		}
 	}
 
 	for _, want := range []string{
-		"Логин GitLab (GITLAB_USERNAME) (ввод скрыт): ",
-		"Токен GitLab (GITLAB_TOKEN) (ввод скрыт): ",
-		"Ключ CustomLLM (HERMES_CUSTOM_LLM_API_KEY) (ввод скрыт): ",
-		"Jira personal token (ввод скрыт): ",
-		"Confluence personal token (ввод скрыт): ",
+		"Логин Gitlab (например: ivan.ivanov) (ввод виден): ",
+		"Токен Gitlab (ввод виден): ",
+		"Токен LLM (ввод виден): ",
+		"Токен Jira (ввод виден): ",
+		"Токен Confluence (ввод виден): ",
 	} {
 		if !strings.Contains(output.String(), want) {
 			t.Fatalf("output=%q does not contain %q", output.String(), want)
@@ -59,7 +59,7 @@ func TestConsoleReaderPreservesUnknownCredentialLabel(t *testing.T) {
 	if _, err := reader.ReadSecret("CUSTOM_SECRET"); err != nil {
 		t.Fatal(err)
 	}
-	if output.String() != "CUSTOM_SECRET (ввод скрыт): " {
+	if output.String() != "CUSTOM_SECRET (ввод виден): " {
 		t.Fatalf("output=%q", output.String())
 	}
 }

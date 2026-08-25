@@ -59,38 +59,7 @@ func TestVerifyRuntimeContract_ParsesPinnedDefaultConfigMapping(t *testing.T) {
 	}
 }
 
-func TestVerifyRuntimeContract_RejectsExecutableReplacementDuringProbe(t *testing.T) {
-	root, executable := writeRuntimeFixture(t, runtimeConfigSchema34, []string{"github"})
-	capture := runtimeFixtureCapture(root)
-	blocked := false
-	_, err := VerifyRuntimeContract(context.Background(), executable, func(ctx context.Context, path string, args []string) ([]byte, error) {
-		data, captureErr := capture(ctx, path, args)
-		if strings.Join(args, " ") == "--version" {
-			if removeErr := os.Remove(executable); removeErr != nil {
-				if runtime.GOOS == "windows" {
-					blocked = true
-					return data, captureErr
-				}
-				t.Fatal(removeErr)
-			}
-			if writeErr := os.WriteFile(executable, []byte("replacement"), 0o700); writeErr != nil {
-				t.Fatal(writeErr)
-			}
-		}
-		return data, captureErr
-	})
-	if blocked {
-		if err != nil {
-			t.Fatalf("contract failed after Windows blocked executable replacement: %v", err)
-		}
-		return
-	}
-	if !errors.Is(err, ErrExecutableUnverified) {
-		t.Fatalf("err=%v, want HERMES_EXECUTABLE_UNVERIFIED", err)
-	}
-}
-
-func TestVerifyRuntimeContract_RejectsExecutableReplacementAfterLastProbe(t *testing.T) {
+func TestVerifyRuntimeContract_RejectsExecutableReplacementBeforeRootOpen(t *testing.T) {
 	root, executable := writeRuntimeFixture(t, runtimeConfigSchema34, []string{"github"})
 	original := beforeRuntimeRootOpen
 	blocked := false
@@ -296,22 +265,29 @@ func TestVerifyRuntimeContract_RejectsUnprovenConfigSchema(t *testing.T) {
 	}
 }
 
-func TestVerifyRuntimeContract_RequiresCurrentCapabilities(t *testing.T) {
+func TestVerifyRuntimeContract_DoesNotInvokeExecutablePreflight(t *testing.T) {
 	_, executable := writeRuntimeFixture(t, runtimeConfigSchema34, []string{"github"})
-	_, err := VerifyRuntimeContract(context.Background(), executable, func(_ context.Context, _ string, args []string) ([]byte, error) {
-		switch strings.Join(args, " ") {
-		case "--version":
-			return runtimeOutput(executable, "0.20.1"), nil
-		case "profile create --help":
-			return []byte("Usage: hermes profile create [--no-skills]\n"), nil
-		case "skills opt-in --help":
-			return []byte("Usage: hermes skills opt-in [--sync]\n"), nil
-		default:
-			return []byte("Usage: hermes profile create\n"), nil
-		}
+	calls := 0
+	contract, err := VerifyRuntimeContract(context.Background(), executable, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contract.ConfigSchema != 34 || !contract.HasBundledSkill("github") {
+		t.Fatalf("contract=%#v", contract)
+	}
+	if contract.Info.Version != "" {
+		t.Fatalf("version=%q", contract.Info.Version)
+	}
+	_, err = VerifyRuntimeContract(context.Background(), executable, func(context.Context, string, []string) ([]byte, error) {
+		calls++
+		t.Fatal("Hermes executable preflight was invoked")
+		return nil, nil
 	})
-	if !errors.Is(err, ErrExecutableUnverified) {
-		t.Fatalf("err=%v, want HERMES_EXECUTABLE_UNVERIFIED", err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 0 || contract.Info.Version != "" {
+		t.Fatalf("calls=%d version=%q", calls, contract.Info.Version)
 	}
 }
 
@@ -341,6 +317,17 @@ func TestInventoryBundledSkills_RejectsRedirectedOrDuplicateInventory(t *testing
 				t.Fatalf("err=%v, want HERMES_BUNDLED_SKILLS_CATALOG_UNVERIFIED", err)
 			}
 		})
+	}
+}
+
+func TestVerifyRuntimeContract_RejectsEmptyBundledInventory(t *testing.T) {
+	root, executable := writeRuntimeFixture(t, runtimeConfigSchema34, nil)
+	if err := os.MkdirAll(filepath.Join(root, "skills"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, err := VerifyRuntimeContract(context.Background(), executable, nil)
+	if !errors.Is(err, ErrBundledSkillsCatalogUnverified) {
+		t.Fatalf("err=%v, want HERMES_BUNDLED_SKILLS_CATALOG_UNVERIFIED", err)
 	}
 }
 

@@ -61,7 +61,7 @@ func (q *questionnaire) completeApplication(ctx context.Context, opts *options) 
 }
 
 func (q *questionnaire) completeKitHome(ctx context.Context, opts *options) error {
-	if err := q.askText(ctx, &opts.kitHome, "Введите KIT_ALL_TEAM_HOME"); err != nil {
+	if err := q.askText(ctx, &opts.kitHome, "Введите каталог для проектов"); err != nil {
 		return err
 	}
 	return nil

@@ -34,7 +34,7 @@ func TestRunInteractiveApply_AddIsFirstAndRejectsExistingBeforePlan(t *testing.T
 	if service.plans != 0 || service.applies != 0 {
 		t.Fatalf("plans=%d applies=%d", service.plans, service.applies)
 	}
-	if !strings.HasPrefix(out.String(), "Что вы хотите сделать:") {
+	if !strings.HasPrefix(out.String(), "Что вы хотите сделать:") || !strings.Contains(out.String(), "Введите каталог для проектов") {
 		t.Fatalf("out=%q", out.String())
 	}
 }
@@ -191,7 +191,7 @@ func TestSelectEnvironment_OneReadyAutoSelectsWithoutPathQuestion(t *testing.T) 
 	if err != nil || got.Home != home {
 		t.Fatalf("got=%#v err=%v", got, err)
 	}
-	if strings.Contains(out.String(), "Введите KIT_ALL_TEAM_HOME") || strings.Contains(out.String(), "Выберите окружение") {
+	if strings.Contains(out.String(), "Введите каталог для проектов") || strings.Contains(out.String(), "Выберите окружение") {
 		t.Fatalf("out=%q", out.String())
 	}
 }
@@ -216,6 +216,7 @@ func TestSelectEnvironment_MultipleShowsProjectsPendingMarkerAndManual(t *testin
 		t.Fatalf("got=%#v err=%v", got, err)
 	}
 	want := "Выберите окружение:\n  1. apa — " + environment.DisplayPath(ready.Home) + "\n  2. " + environment.DisplayPath(pending.Home) + " — незавершённая операция\n  3. Указать другой путь\nВведите номер ответа: "
+	want += "Введите каталог для проектов: "
 	if !strings.Contains(out.String(), want) || inspector.inspectCalls != 3 {
 		t.Fatalf("calls=%d output=%q", inspector.inspectCalls, out.String())
 	}

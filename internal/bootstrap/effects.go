@@ -498,7 +498,7 @@ func (e *Effects) configure(ctx context.Context, desired domain.DesiredState) er
 	if err != nil {
 		return err
 	}
-	data, err := profile.RenderForSchema(hermes.CustomLLMProvider(), e.RuntimeContract.ConfigSchema)
+	data, err := profile.RenderForSchema(hermes.PublicProviderProvider(), e.RuntimeContract.ConfigSchema)
 	if err != nil {
 		return err
 	}
@@ -602,7 +602,7 @@ func (e *Effects) verifyHermesManagedState(ctx context.Context, desired domain.D
 	if err != nil {
 		return err
 	}
-	configData, err := profile.RenderForSchema(hermes.CustomLLMProvider(), e.RuntimeContract.ConfigSchema)
+	configData, err := profile.RenderForSchema(hermes.PublicProviderProvider(), e.RuntimeContract.ConfigSchema)
 	if err != nil {
 		return err
 	}
@@ -952,7 +952,7 @@ func profileConfigReady(desired domain.DesiredState, schema int, officeCLIPath s
 	if err != nil {
 		return false, err
 	}
-	expected, err := profile.RenderForSchema(hermes.CustomLLMProvider(), schema)
+	expected, err := profile.RenderForSchema(hermes.PublicProviderProvider(), schema)
 	if err != nil {
 		return false, err
 	}
