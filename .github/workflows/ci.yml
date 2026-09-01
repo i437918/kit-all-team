@@ -1,0 +1,343 @@
+name: ci
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_public_sha:
+        description: Exact public commit SHA checked out and qualified by this run
+        required: true
+        type: string
+      source_revision:
+        description: Exact canonical source revision embedded in the candidate
+        required: true
+        type: string
+      source_commit_time:
+        description: Exact canonical source commit time embedded in the candidate
+        required: true
+        type: string
+      source_manifest_sha256:
+        description: SHA256 digest of SOURCE-EXPORT.json without a prefix
+        required: true
+        type: string
+      qualification_mode:
+        description: Build only the release candidate or run the complete qualification matrix
+        required: true
+        type: choice
+        options:
+          - candidate_only
+          - full
+
+permissions:
+  contents: read
+
+env:
+  VERSION: v0.1.8
+  EXPECTED_PUBLIC_SHA: ${{ inputs.expected_public_sha }}
+  TEAMKIT_SOURCE_REVISION: ${{ inputs.source_revision }}
+  TEAMKIT_SOURCE_COMMIT_TIME: ${{ inputs.source_commit_time }}
+  SOURCE_MANIFEST_SHA256: ${{ inputs.source_manifest_sha256 }}
+  QUALIFICATION_MODE: ${{ inputs.qualification_mode }}
+
+jobs:
+  build-candidate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      candidate-digest: ${{ format('sha256:{0}', steps.upload-candidate.outputs.artifact-digest) }}
+    steps:
+      - name: Bind trusted dispatch to exact public and source identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$EXPECTED_PUBLIC_SHA"
+          test "$GITHUB_SHA" = "$EXPECTED_PUBLIC_SHA"
+          [[ "$TEAMKIT_SOURCE_REVISION" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$SOURCE_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$TEAMKIT_SOURCE_COMMIT_TIME" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$ ]]
+          case "$QUALIFICATION_MODE" in candidate_only|full) ;; *) exit 1 ;; esac
+          date --date="$TEAMKIT_SOURCE_COMMIT_TIME" --iso-8601=seconds >/dev/null
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify exported source manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(sha256sum SOURCE-EXPORT.json | awk '{print $1}')" = "$SOURCE_MANIFEST_SHA256"
+          jq -e \
+            --arg source_revision "$TEAMKIT_SOURCE_REVISION" \
+            --arg source_commit_time "$TEAMKIT_SOURCE_COMMIT_TIME" \
+            --arg version "$VERSION" \
+            '.source_revision == $source_revision and .source_commit_time == $source_commit_time and .version == $version' \
+            SOURCE-EXPORT.json >/dev/null
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+          check-latest: false
+      - name: Build exact candidate set
+        shell: bash
+        run: bash scripts/build.sh "$VERSION"
+      - name: Build release security auditor
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p security-tool
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+            -buildvcs=false -trimpath \
+            -o security-tool/security-auditor-linux-amd64 \
+            ./cmd/teamkit-security-audit
+          (cd security-tool && sha256sum security-auditor-linux-amd64 > SHA256SUMS)
+      - name: Audit repository, history, and exact candidate set
+        shell: bash
+        run: |
+          set -euo pipefail
+          security-tool/security-auditor-linux-amd64 \
+            --repository . --path dist --commit "$TEAMKIT_SOURCE_REVISION" \
+            --history-ref "$GITHUB_SHA" \
+            --output dist/SECURITY-AUDIT.json
+      - name: Write public candidate provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -n \
+            --arg source_revision "$TEAMKIT_SOURCE_REVISION" \
+            --arg github_revision "$GITHUB_SHA" \
+            --arg source_manifest_sha256 "$SOURCE_MANIFEST_SHA256" \
+            --arg github_run_id "$GITHUB_RUN_ID" \
+            --arg github_run_attempt "$GITHUB_RUN_ATTEMPT" \
+            '{source_revision: $source_revision, github_revision: $github_revision, source_manifest_sha256: $source_manifest_sha256, github_run_id: $github_run_id, github_run_attempt: $github_run_attempt}' \
+            > dist/SOURCE-PROVENANCE.json
+      - id: upload-candidate
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: candidate-binaries
+          path: |
+            dist/teamkit-v0.1.8-windows-amd64.exe
+            dist/teamkit-v0.1.8-linux-amd64
+            dist/teamkit-v0.1.8-darwin-amd64
+            dist/teamkit-v0.1.8-darwin-arm64
+            dist/SHA256SUMS
+            dist/SECURITY-AUDIT.json
+            dist/SOURCE-PROVENANCE.json
+          if-no-files-found: error
+          retention-days: 7
+
+  native:
+    if: inputs.qualification_mode == 'full'
+    needs: build-candidate
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2025
+            binary: teamkit-v0.1.8-windows-amd64.exe
+            officecli_asset: officecli-win-x64.exe
+          - runner: ubuntu-24.04
+            binary: teamkit-v0.1.8-linux-amd64
+            officecli_asset: officecli-linux-x64
+          - runner: macos-15-intel
+            binary: teamkit-v0.1.8-darwin-amd64
+            officecli_asset: officecli-mac-x64
+          - runner: macos-15
+            binary: teamkit-v0.1.8-darwin-arm64
+            officecli_asset: officecli-mac-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+          check-latest: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: candidate-binaries
+          path: dist
+      - name: Verify source and exact platform binary
+        shell: bash
+        env:
+          TEAMKIT_TEST_BINARY: dist/${{ matrix.binary }}
+          CANDIDATE_ARTIFACT_DIGEST: ${{ needs.build-candidate.outputs.candidate-digest }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/evidence/native
+          if command -v sha256sum >/dev/null 2>&1; then
+            (cd dist && sha256sum --check --strict SHA256SUMS)
+          else
+            (cd dist && shasum -a 256 --check SHA256SUMS)
+          fi
+          jq -e \
+            --arg source_revision "$TEAMKIT_SOURCE_REVISION" \
+            --arg github_revision "$GITHUB_SHA" \
+            --arg source_manifest_sha256 "$SOURCE_MANIFEST_SHA256" \
+            '.source_revision == $source_revision and .github_revision == $github_revision and .source_manifest_sha256 == $source_manifest_sha256' \
+            dist/SOURCE-PROVENANCE.json >/dev/null
+          chmod +x "$TEAMKIT_TEST_BINARY"
+          go vet ./...
+          go test -json ./... | tee "dist/evidence/native/${{ matrix.runner }}-tests.json"
+          go test -race -timeout=30m ./...
+          "$TEAMKIT_TEST_BINARY" --version | tee "dist/evidence/native/${{ matrix.runner }}-version.json"
+          printf 'source_revision=%s\ngithub_revision=%s\ncandidate_digest=%s\n' "$TEAMKIT_SOURCE_REVISION" "$GITHUB_SHA" "$CANDIDATE_ARTIFACT_DIGEST" > "dist/evidence/native/${{ matrix.runner }}-candidate.txt"
+          go run ./cmd/teamkit-security-audit \
+            --repository . --path dist --commit "$TEAMKIT_SOURCE_REVISION" \
+            --history-ref "$GITHUB_SHA" \
+            --output "dist/evidence/native/security-audit-${{ matrix.runner }}.json"
+      - name: Verify qualified OfficeCLI runtime and MCP handshake
+        shell: bash
+        env:
+          TEAMKIT_OFFICECLI_KEEP_PATH: ${{ github.workspace }}/dist/evidence/officecli
+          TEAMKIT_OFFICECLI_RUNNER_ENVIRONMENT: ${{ runner.environment }}
+        run: go test -tags officecli_live ./internal/service -run TestOfficeCLILive_QualifiedAssetAndMCPHandshake -count=1 -timeout=3m
+      - name: Verify OfficeCLI Developer ID signature and notarization policy
+        if: startsWith(matrix.runner, 'macos-')
+        shell: bash
+        env:
+          OFFICECLI_EVIDENCE: ${{ github.workspace }}/dist/evidence/officecli/${{ matrix.officecli_asset }}
+        run: |
+          set -euo pipefail
+          codesign --verify --strict --verbose=2 "$OFFICECLI_EVIDENCE"
+          export LC_ALL=C
+          spctl_output_file=$(mktemp)
+          spctl_expected_file=$(mktemp)
+          trap 'rm -f -- "$spctl_output_file" "$spctl_expected_file"' EXIT
+          set +e
+          spctl --assess --type execute --verbose=4 "$OFFICECLI_EVIDENCE" 2>&1 |
+            head -c 4097 >"$spctl_output_file"
+          spctl_status=${PIPESTATUS[0]}
+          set -e
+          spctl_output_size=$(wc -c <"$spctl_output_file" | tr -d '[:space:]')
+          test "$spctl_output_size" -le 4096
+          if [ "$spctl_status" -eq 0 ]; then
+            printf 'OFFICECLI_SPCTL_ACCEPTED\n'
+          else
+            test "$spctl_status" -eq 3
+            spctl_message='rejected (the code is valid but does not seem to be an app)'
+            spctl_match=false
+            for spctl_prefix in "" "$OFFICECLI_EVIDENCE: "; do
+              printf '%s%s' "$spctl_prefix" "$spctl_message" >"$spctl_expected_file"
+              cmp -s -- "$spctl_output_file" "$spctl_expected_file" && spctl_match=true
+              printf '\n' >>"$spctl_expected_file"
+              cmp -s -- "$spctl_output_file" "$spctl_expected_file" && spctl_match=true
+            done
+            test "$spctl_match" = true
+            printf 'OFFICECLI_SPCTL_BARE_MACHO_NOT_APP\n'
+          fi
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: native-evidence-${{ matrix.runner }}
+          path: |
+            dist/evidence/native/${{ matrix.runner }}-tests.json
+            dist/evidence/native/${{ matrix.runner }}-version.json
+            dist/evidence/native/${{ matrix.runner }}-candidate.txt
+            dist/evidence/native/security-audit-${{ matrix.runner }}.json
+          if-no-files-found: error
+          retention-days: 7
+
+  alt-p11-userspace:
+    if: inputs.qualification_mode == 'full'
+    needs: build-candidate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+          check-latest: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: candidate-binaries
+          path: dist
+      - name: Run exact candidate in pinned ALT p11 userspace
+        shell: bash
+        env:
+          ALT_IMAGE: registry.altlinux.org/p11/alt@sha256:4c76520bb4935edf624dde76d5e670d54f40938323b185c4c7270881b71fd8ea
+          CANDIDATE_ARTIFACT_DIGEST: ${{ needs.build-candidate.outputs.candidate-digest }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/evidence/alt-userspace
+          (cd dist && sha256sum --check --strict SHA256SUMS)
+          jq -e \
+            --arg source_revision "$TEAMKIT_SOURCE_REVISION" \
+            --arg github_revision "$GITHUB_SHA" \
+            --arg source_manifest_sha256 "$SOURCE_MANIFEST_SHA256" \
+            '.source_revision == $source_revision and .github_revision == $github_revision and .source_manifest_sha256 == $source_manifest_sha256' \
+            dist/SOURCE-PROVENANCE.json >/dev/null
+          chmod 0755 dist/teamkit-v0.1.8-linux-amd64
+          bash scripts/alt-container-smoke.sh dist/teamkit-v0.1.8-linux-amd64 | tee dist/evidence/alt-userspace/smoke.log
+          printf 'source_revision=%s\ngithub_revision=%s\ncandidate_digest=%s\n' "$TEAMKIT_SOURCE_REVISION" "$GITHUB_SHA" "$CANDIDATE_ARTIFACT_DIGEST" > dist/evidence/alt-userspace/candidate.txt
+          go run ./cmd/teamkit-security-audit \
+            --repository . --path dist --commit "$TEAMKIT_SOURCE_REVISION" \
+            --history-ref "$GITHUB_SHA" \
+            --output dist/evidence/alt-userspace/security-audit-alt-userspace.json
+      - name: Build ephemeral ALT p11 OfficeCLI qualification image
+        shell: bash
+        env:
+          ALT_BASE_IMAGE: registry.altlinux.org/p11/alt@sha256:4c76520bb4935edf624dde76d5e670d54f40938323b185c4c7270881b71fd8ea
+          ALT_LIBRT_APT_SPEC: glibc-pthread=2.38.0.223.f053ff-alt1.p11.1
+          ALT_LIBRT_PACKAGE: glibc-pthread-6:2.38.0.223.f053ff-alt1.p11.1.x86_64
+          ALT_LDD_APT_SPEC: glibc-utils=2.38.0.223.f053ff-alt1.p11.1
+          ALT_LDD_PACKAGE: glibc-utils-6:2.38.0.223.f053ff-alt1.p11.1.x86_64
+          ALT_ICU_APT_SPEC: libicu74=7.4.2-alt1
+          ALT_ICU_PACKAGE: libicu74-1:7.4.2-alt1.x86_64
+        run: |
+          set -euo pipefail
+          qualification_image="teamkit-alt-p11-officecli:${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker build --platform linux/amd64 --file docker/alt-p11-officecli/Dockerfile \
+            --build-arg ALT_LIBRT_APT_SPEC="$ALT_LIBRT_APT_SPEC" \
+            --build-arg ALT_LIBRT_PACKAGE="$ALT_LIBRT_PACKAGE" \
+            --build-arg ALT_LDD_APT_SPEC="$ALT_LDD_APT_SPEC" \
+            --build-arg ALT_LDD_PACKAGE="$ALT_LDD_PACKAGE" \
+            --build-arg ALT_ICU_APT_SPEC="$ALT_ICU_APT_SPEC" \
+            --build-arg ALT_ICU_PACKAGE="$ALT_ICU_PACKAGE" \
+            --tag "$qualification_image" .
+          local_image_id="$(docker image inspect "$qualification_image" --format '{{.Id}}')"
+          printf 'qualification_image=%s\nalt_base_image=%s\nlocal_image_id=%s\nalt_librt_package=%s\nalt_ldd_package=%s\nalt_icu_package=%s\n' \
+            "$qualification_image" "$ALT_BASE_IMAGE" "$local_image_id" "$ALT_LIBRT_PACKAGE" "$ALT_LDD_PACKAGE" "$ALT_ICU_PACKAGE" \
+            > dist/evidence/alt-userspace/qualification.txt
+      - name: Verify OfficeCLI in ephemeral ALT p11 userspace
+        shell: bash
+        env:
+          TEAMKIT_OFFICECLI_KEEP_PATH: ${{ github.workspace }}/dist/evidence/officecli
+          ALT_LIBRT_PACKAGE: glibc-pthread-6:2.38.0.223.f053ff-alt1.p11.1.x86_64
+          ALT_LDD_PACKAGE: glibc-utils-6:2.38.0.223.f053ff-alt1.p11.1.x86_64
+          ALT_ICU_PACKAGE: libicu74-1:7.4.2-alt1.x86_64
+        run: |
+          set -euo pipefail
+          qualification_image="teamkit-alt-p11-officecli:${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p dist/evidence/officecli
+          go test -tags officecli_live ./internal/service -run TestOfficeCLILive_QualifiedAssetAndMCPHandshake -count=1 -timeout=3m
+          officecli_asset=dist/evidence/officecli/officecli-linux-x64
+          chmod 0755 "$officecli_asset"
+          test "$(wc -c < "$officecli_asset")" -eq 35316133
+          printf '%s  %s\n' 32ef7a21a54a4ca6c9806bf5e9f3d32bfb1291017329c55044cb2aac71822eb8 "$officecli_asset" | sha256sum --check --strict
+          CGO_ENABLED=0 go test -c -tags officecli_live -o dist/evidence/officecli/officecli-live.test ./internal/service
+          chmod 0755 dist/evidence/officecli/officecli-live.test
+          bash scripts/qualify-alt-officecli-image.sh \
+            "$qualification_image" "$ALT_LIBRT_PACKAGE" "$ALT_LDD_PACKAGE" "$ALT_ICU_PACKAGE" \
+            "$officecli_asset" dist/evidence/officecli/officecli-live.test \
+            | tee -a dist/evidence/alt-userspace/smoke.log
+          printf 'officecli_sha256=%s\nofficecli_handshake=verified\n' \
+            32ef7a21a54a4ca6c9806bf5e9f3d32bfb1291017329c55044cb2aac71822eb8 \
+            >> dist/evidence/alt-userspace/qualification.txt
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: alt-userspace-evidence
+          path: |
+            dist/evidence/alt-userspace/smoke.log
+            dist/evidence/alt-userspace/candidate.txt
+            dist/evidence/alt-userspace/qualification.txt
+            dist/evidence/alt-userspace/security-audit-alt-userspace.json
+          if-no-files-found: error
+          retention-days: 7
