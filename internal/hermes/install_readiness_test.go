@@ -62,7 +62,7 @@ func TestManagedInstallReady_RejectsNonExecutableBinaryOnPOSIX(t *testing.T) {
 	}
 	home := testutil.TempDir(t)
 	writeManagedInstallFixture(t, home, true)
-	executable := filepath.Join(home, ".teamkit", "hermes-agent-source", "venv", "bin", "hermes")
+	executable := filepath.Join(home, "hermes-agent", "venv", "bin", "hermes")
 	if err := os.Chmod(executable, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestManagedInstallReady_RejectsNonExecutableBinaryOnPOSIX(t *testing.T) {
 func TestManagedInstallReady_RejectsEmptyExecutable(t *testing.T) {
 	home := testutil.TempDir(t)
 	writeManagedInstallFixture(t, home, true)
-	executable := filepath.Join(home, ".teamkit", "hermes-agent-source", "venv", "bin", "hermes")
+	executable := filepath.Join(home, "hermes-agent", "venv", "bin", "hermes")
 	if err := os.WriteFile(executable, nil, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestManagedInstallReady_RejectsRedirectedExecutable(t *testing.T) {
 	if err := os.WriteFile(external, []byte("external\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	executable := filepath.Join(home, ".teamkit", "hermes-agent-source", "venv", "bin", "hermes")
+	executable := filepath.Join(home, "hermes-agent", "venv", "bin", "hermes")
 	if err := os.MkdirAll(filepath.Dir(executable), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestManagedInstallReady_RejectsRedirectedExecutable(t *testing.T) {
 
 func writeManagedInstallFixture(t *testing.T, home string, executable bool) {
 	t.Helper()
-	checkout := filepath.Join(home, ".teamkit", "hermes-agent-source")
+	checkout := filepath.Join(home, "hermes-agent")
 	if err := os.MkdirAll(filepath.Join(checkout, ".git"), 0o700); err != nil {
 		t.Fatal(err)
 	}

@@ -3,6 +3,7 @@ package hermes
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,6 +26,10 @@ func nativeOS() domain.OSFamily {
 }
 
 func discoveryExecutable(t *testing.T, home string) string {
+	return discoveryExecutableWithSchema(t, home, 34)
+}
+
+func discoveryExecutableWithSchema(t *testing.T, home string, schema int) string {
 	t.Helper()
 	path := filepath.Join(home, "hermes-agent", "venv", "bin", "hermes")
 	if runtime.GOOS == "windows" {
@@ -40,11 +45,60 @@ func discoveryExecutable(t *testing.T, home string) string {
 	if err := os.MkdirAll(filepath.Join(install, "hermes_cli"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(install, "hermes_cli", "config_defaults.py"), []byte("DEFAULT_CONFIG = {\n    \"_config_version\": 34,\n}\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(install, "hermes_cli", "config_defaults.py"), []byte(fmt.Sprintf("DEFAULT_CONFIG = {\n    \"_config_version\": %d,\n}\n", schema)), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	writeBundledSkill(t, install, "github", "github")
 	return path
+}
+
+func TestDiscover_ExactStandardExecutableAcceptsSchema39WithoutLaunchingHermes(t *testing.T) {
+	home := testutil.TempDir(t)
+	path := discoveryExecutableWithSchema(t, home, 39)
+	result, err := Discover(context.Background(), DiscoveryRequest{OS: nativeOS(), ExplicitHome: home}, DiscoveryDependencies{
+		LookPath: func(string) (string, error) { t.Fatal("PATH lookup used"); return "", nil },
+		Capture:  func(context.Context, string, []string) ([]byte, error) { t.Fatal("Hermes launched"); return nil, nil },
+	})
+	if err != nil || !result.Installed || result.Executable != path || result.Contract.ConfigSchema != 39 || result.Version != "" {
+		t.Fatalf("Discover()=%#v,%v", result, err)
+	}
+}
+
+func TestDiscover_WindowsRequestUsesWindowsRuntimeLayout(t *testing.T) {
+	home := testutil.TempDir(t)
+	path := filepath.Join(home, "hermes-agent", "venv", "Scripts", "hermes.exe")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("exe"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(home, "hermes-agent", "hermes_cli", "config_defaults.py")
+	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config, []byte("DEFAULT_CONFIG = {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Discover(context.Background(), DiscoveryRequest{OS: domain.OSWindows, ExplicitHome: home}, DiscoveryDependencies{})
+	if !errors.Is(err, ErrConfigSchemaUnsupported) || errors.Is(err, ErrExecutableUnverified) {
+		t.Fatalf("err=%v, want HERMES_CONFIG_SCHEMA_UNSUPPORTED without HERMES_EXECUTABLE_UNVERIFIED", err)
+	}
+}
+
+func TestDiscover_DoesNotUsePathExecutableOutsideSelectedHermesHome(t *testing.T) {
+	home := filepath.Join(testutil.TempDir(t), "selected")
+	other := testutil.TempDir(t)
+	path := discoveryExecutableWithSchema(t, other, 39)
+	yes := true
+	_, err := Discover(context.Background(), DiscoveryRequest{OS: nativeOS(), ExplicitHome: home, InstalledOverride: &yes}, DiscoveryDependencies{
+		LookPath: func(string) (string, error) { t.Fatal("PATH lookup used"); return path, nil },
+		Capture:  func(context.Context, string, []string) ([]byte, error) { t.Fatal("Hermes launched"); return nil, nil },
+	})
+	if !errors.Is(err, ErrExecutableNotFound) {
+		t.Fatalf("err=%v, want HERMES_EXECUTABLE_NOT_FOUND", err)
+	}
 }
 
 func discoveryCapture(path, version string) executableCapture {
@@ -69,7 +123,7 @@ func TestDiscover_ExplicitHomeWinsAndFindsExactExecutable(t *testing.T) {
 		Getenv: func(string) string { return "ignored" }, UserHomeDir: func() (string, error) { return testutil.TempDir(t), nil },
 		LookPath: func(string) (string, error) { t.Fatal("PATH lookup after exact candidate"); return "", nil }, Capture: discoveryCapture(path, "0.20.2"),
 	})
-	if err != nil || !result.Installed || result.Home != home || result.Executable != path || result.Version != "" || result.Contract.ConfigSchema != 34 || !result.Contract.HasBundledSkill("github") {
+	if err != nil || !result.Installed || result.Home != home || result.Executable != path || result.Version != "" || result.Contract.ConfigSchema != 34 || len(result.Contract.BundledSkills) != 0 {
 		t.Fatalf("Discover()=%#v,%v", result, err)
 	}
 }
@@ -88,76 +142,6 @@ func TestDiscover_EnvironmentHomeFindsExactExecutable(t *testing.T) {
 	}
 }
 
-func TestDiscover_UsesOnlyFirstPATHCandidate(t *testing.T) {
-	home := testutil.TempDir(t)
-	path := discoveryExecutable(t, home)
-	lookups := 0
-	result, err := Discover(context.Background(), DiscoveryRequest{OS: nativeOS(), ExplicitHome: home}, DiscoveryDependencies{
-		LookPath: func(name string) (string, error) { lookups++; return path, nil }, Lstat: func(candidate string) (os.FileInfo, error) {
-			if candidate == path {
-				return nil, os.ErrNotExist
-			}
-			return os.Lstat(candidate)
-		}, Capture: discoveryCapture(path, "0.20.1"),
-	})
-	if err != nil || !result.Installed || lookups != 1 {
-		t.Fatalf("result=%#v err=%v lookups=%d", result, err, lookups)
-	}
-}
-
-func TestDiscover_RejectsPATHRuntimeOutsideAuthoritativeHome(t *testing.T) {
-	home := testutil.TempDir(t)
-	other := testutil.TempDir(t)
-	path := discoveryExecutable(t, other)
-	_, err := Discover(context.Background(), DiscoveryRequest{OS: nativeOS(), ExplicitHome: home}, DiscoveryDependencies{LookPath: func(string) (string, error) { return path, nil }, Capture: discoveryCapture(path, "0.20.1")})
-	if !errors.Is(err, ErrHomeAutoDetect) {
-		t.Fatalf("err=%v", err)
-	}
-}
-
-func TestDiscover_DerivesOfficialHomeFromPATHWhenNoAuthoritativeSource(t *testing.T) {
-	customHome := testutil.TempDir(t)
-	path := discoveryExecutable(t, customHome)
-	defaultBase := testutil.TempDir(t)
-	result, err := Discover(context.Background(), DiscoveryRequest{OS: nativeOS()}, DiscoveryDependencies{
-		Getenv: func(key string) string {
-			if key == "LOCALAPPDATA" {
-				return defaultBase
-			}
-			return ""
-		},
-		UserHomeDir: func() (string, error) { return testutil.TempDir(t), nil }, LookPath: func(string) (string, error) { return path, nil }, Capture: discoveryCapture(path, "0.20.2"),
-	})
-	if err != nil || result.Home != customHome || !result.Installed {
-		t.Fatalf("result=%#v err=%v", result, err)
-	}
-}
-
-func TestDiscover_RejectsNonstandardPATHLayoutWithoutAuthoritativeSource(t *testing.T) {
-	install := filepath.Join(testutil.TempDir(t), "arbitrary-install")
-	path := filepath.Join(install, "venv", "bin", "hermes")
-	if runtime.GOOS == "windows" {
-		path = filepath.Join(install, "venv", "Scripts", "hermes.exe")
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte("exe"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(install, "hermes_cli"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(install, "hermes_cli", "config_defaults.py"), []byte("DEFAULT_CONFIG = {\n    \"_config_version\": 34,\n}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	writeBundledSkill(t, install, "github", "github")
-	_, err := Discover(context.Background(), DiscoveryRequest{OS: nativeOS()}, DiscoveryDependencies{Getenv: func(string) string { return "" }, UserHomeDir: func() (string, error) { return testutil.TempDir(t), nil }, LookPath: func(string) (string, error) { return path, nil }, Capture: discoveryCapture(path, "0.20.1")})
-	if !errors.Is(err, ErrHomeAutoDetect) {
-		t.Fatalf("err=%v", err)
-	}
-}
-
 func TestDiscover_NoExecutableReturnsSafeInstallTarget(t *testing.T) {
 	home := filepath.Join(testutil.TempDir(t), "new-home")
 	result, err := Discover(context.Background(), DiscoveryRequest{OS: nativeOS(), ExplicitHome: home}, DiscoveryDependencies{
@@ -172,9 +156,51 @@ func TestDiscover_InstalledOverrideRequiresExecutable(t *testing.T) {
 	home := filepath.Join(testutil.TempDir(t), "new-home")
 	yes := true
 	_, err := Discover(context.Background(), DiscoveryRequest{OS: nativeOS(), ExplicitHome: home, InstalledOverride: &yes}, DiscoveryDependencies{LookPath: func(string) (string, error) { return "", exec.ErrNotFound }})
-	if !errors.Is(err, ErrExecutableUnverified) {
+	if !errors.Is(err, ErrExecutableNotFound) {
 		t.Fatalf("err=%v", err)
 	}
+}
+
+func TestDiscover_InstalledOverrideClassifiesExactExecutableFailures(t *testing.T) {
+	yes := true
+	t.Run("missing exact executable", func(t *testing.T) {
+		home := testutil.TempDir(t)
+		_, err := Discover(context.Background(), DiscoveryRequest{OS: nativeOS(), ExplicitHome: home, InstalledOverride: &yes}, DiscoveryDependencies{
+			LookPath: func(string) (string, error) { t.Fatal("PATH lookup used"); return "", nil },
+		})
+		if !errors.Is(err, ErrExecutableNotFound) || errors.Is(err, ErrExecutableUnverified) {
+			t.Fatalf("err=%v, want only ErrExecutableNotFound", err)
+		}
+	})
+
+	t.Run("exact executable inspection failure", func(t *testing.T) {
+		home := testutil.TempDir(t)
+		candidate := exactCandidates(nativeOS(), home)[0]
+		_, err := Discover(context.Background(), DiscoveryRequest{OS: nativeOS(), ExplicitHome: home, InstalledOverride: &yes}, DiscoveryDependencies{
+			Lstat: func(path string) (os.FileInfo, error) {
+				if filepath.Clean(path) == filepath.Clean(candidate) {
+					return nil, os.ErrPermission
+				}
+				return os.Lstat(path)
+			},
+		})
+		if !errors.Is(err, ErrExecutableUnverified) || errors.Is(err, ErrExecutableNotFound) {
+			t.Fatalf("err=%v, want only ErrExecutableUnverified", err)
+		}
+	})
+
+	t.Run("unsupported schema", func(t *testing.T) {
+		home := testutil.TempDir(t)
+		discoveryExecutableWithSchema(t, home, 39)
+		config := filepath.Join(home, "hermes-agent", "hermes_cli", "config_defaults.py")
+		if err := os.WriteFile(config, []byte("DEFAULT_CONFIG = {}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := Discover(context.Background(), DiscoveryRequest{OS: nativeOS(), ExplicitHome: home, InstalledOverride: &yes}, DiscoveryDependencies{})
+		if !errors.Is(err, ErrConfigSchemaUnsupported) || errors.Is(err, ErrExecutableNotFound) || errors.Is(err, ErrExecutableUnverified) {
+			t.Fatalf("err=%v, want only ErrConfigSchemaUnsupported", err)
+		}
+	})
 }
 
 func TestDiscover_NotInstalledOverrideSkipsRuntime(t *testing.T) {

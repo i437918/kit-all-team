@@ -61,12 +61,11 @@ func managedInstallReady(ctx context.Context, hermesHome, expectedOrigin, expect
 		return false, fmt.Errorf("%w: HERMES_HOME must be absolute", ErrInstallLayout)
 	}
 	home := filepath.Clean(hermesHome)
-	checkout := filepath.Join(home, ".teamkit", "hermes-agent-source")
+	checkout := filepath.Join(home, "hermes-agent")
 	executable := filepath.Join(checkout, "venv", "bin", "hermes")
 
 	for _, directory := range []string{
 		home,
-		filepath.Join(home, ".teamkit"),
 		checkout,
 		filepath.Join(checkout, ".git"),
 		filepath.Join(checkout, "venv"),
@@ -76,7 +75,7 @@ func managedInstallReady(ctx context.Context, hermesHome, expectedOrigin, expect
 			return false, fmt.Errorf("%w: %v", ErrInstallLayout, err)
 		}
 	}
-	for _, directory := range []string{home, filepath.Join(home, ".teamkit"), checkout, filepath.Join(checkout, ".git")} {
+	for _, directory := range []string{home, checkout, filepath.Join(checkout, ".git")} {
 		info, err := os.Lstat(directory)
 		if errors.Is(err, fs.ErrNotExist) {
 			return false, nil

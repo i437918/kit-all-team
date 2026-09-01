@@ -14,9 +14,11 @@ import (
 
 	"github.com/mi1man-cmd/kit-all-team/internal/apps"
 	"github.com/mi1man-cmd/kit-all-team/internal/buildinfo"
+	"github.com/mi1man-cmd/kit-all-team/internal/catalog"
 	"github.com/mi1man-cmd/kit-all-team/internal/domain"
 	"github.com/mi1man-cmd/kit-all-team/internal/environment"
 	"github.com/mi1man-cmd/kit-all-team/internal/hermes"
+	"github.com/mi1man-cmd/kit-all-team/internal/platform"
 	"github.com/mi1man-cmd/kit-all-team/internal/reconcile"
 )
 
@@ -59,16 +61,20 @@ type PlanCredentialSource interface {
 
 // Runner owns I/O and dispatch for one command invocation.
 type Runner struct {
-	Service         Service
-	Credentials     CredentialSource
-	In              io.Reader
-	Out             io.Writer
-	Err             io.Writer
-	HermesDiscovery func(context.Context, hermes.DiscoveryRequest) (hermes.DiscoveryResult, error)
-	Environments    environment.Inspector
-	Registry        EnvironmentRegistry
-	GOOS            string
-	Executable      func() (string, error)
+	Service             Service
+	Credentials         CredentialSource
+	ServiceFactory      func() Service
+	CredentialFactory   func() CredentialSource
+	In                  io.Reader
+	Out                 io.Writer
+	Err                 io.Writer
+	HermesDiscovery     func(context.Context, hermes.DiscoveryRequest) (hermes.DiscoveryResult, error)
+	ApplicationLookPath platform.LookPath
+	Environments        environment.Inspector
+	Registry            EnvironmentRegistry
+	GOOS                string
+	Executable          func() (string, error)
+	ConfigureHermesHome func(string) error
 }
 
 type commandResult struct {
@@ -99,13 +105,24 @@ func (r Runner) Run(ctx context.Context, args []string) int {
 		fmt.Fprint(r.Err, message)
 		return ExitUsage
 	}
+	if isPublicQuery(opts.command) {
+		return r.runPublicQuery(ctx, opts)
+	}
+	r.withOperationalDefaults()
+	r.ensureService()
 	session := &registrySession{store: r.Registry}
 	if opts.command == "help" {
-		fmt.Fprintln(r.Out, "teamkit plan|apply|status|retry|update|version")
+		fmt.Fprintln(r.Out, "teamkit plan|apply|status|retry|update|user-check|version")
 		return ExitOK
 	}
 	if opts.command == "version" {
 		return r.writeResult(opts, commandResult{Command: "version", Info: buildinfo.Current()})
+	}
+	if opts.command == "user-check" {
+		return r.runUserCheck(ctx)
+	}
+	if opts.nonInteractive && opts.isHermesContinuationShape() {
+		return r.fail(opts, newOperationalError(codeInputRequired, "Hermes continuation requires interactive credential choices", nil), nil)
 	}
 	if (opts.command == "plan" || opts.command == "apply") && opts.nonInteractive && isKnownNonHermesApplication(opts.application) {
 		if _, err := opts.applicationInstalled(); err != nil {
@@ -114,6 +131,9 @@ func (r Runner) Run(ctx context.Context, args []string) int {
 	}
 	if opts.command == "apply" && !opts.nonInteractive {
 		q := newQuestionnaire(r.In, r.Out)
+		if opts.isHermesContinuation() {
+			return r.runHermesContinuation(ctx, &opts, q, session)
+		}
 		mode, modeErr := q.askApplyMode(ctx)
 		if modeErr != nil {
 			return r.fail(opts, modeErr, nil)
@@ -140,7 +160,11 @@ func (r Runner) Run(ctx context.Context, args []string) int {
 			if err := q.completeApplication(ctx, &opts); err != nil {
 				return r.fail(opts, err, nil)
 			}
-			if err := q.completeKitHome(ctx, &opts); err != nil {
+			if opts.application == string(domain.AppHermes) && opts.operatingSystem == "windows" {
+				if err := r.prepareHermesHome(ctx, &opts, q); err != nil {
+					return r.fail(opts, err, nil)
+				}
+			} else if err := q.completeKitHome(ctx, &opts); err != nil {
 				return r.fail(opts, err, nil)
 			}
 			if err := r.discoverHermes(ctx, &opts); err != nil {
@@ -185,6 +209,7 @@ func (r Runner) Run(ctx context.Context, args []string) int {
 		}
 		return r.writeResult(opts, commandResult{Command: "status", Status: status, Plan: plan})
 	case "retry":
+		ctx = withMutationProgress(ctx, r.Out, !opts.jsonOutput)
 		if err := r.Service.Retry(ctx, opts.kitHome); err != nil {
 			return r.fail(opts, err, nil)
 		}
@@ -201,6 +226,7 @@ func (r Runner) Run(ctx context.Context, args []string) int {
 		if err != nil {
 			return r.fail(opts, err, nil)
 		}
+		ctx = withMutationProgress(ctx, r.Out, !opts.jsonOutput)
 		updatedPlan, err := r.Service.Update(ctx, opts.kitHome, update)
 		if err != nil {
 			return r.fail(opts, err, nil)
@@ -218,7 +244,7 @@ func (r Runner) Run(ctx context.Context, args []string) int {
 	}
 }
 
-func (r Runner) runDesiredApply(ctx context.Context, opts options, desired domain.DesiredState, metadata *hermesResult, session *registrySession) int {
+func (r *Runner) runDesiredApply(ctx context.Context, opts options, desired domain.DesiredState, metadata *hermesResult, session *registrySession) int {
 	update, err := parseUpdate(opts.update)
 	if err != nil {
 		return r.fail(opts, err, nil)
@@ -235,6 +261,7 @@ func (r Runner) runDesiredApply(ctx context.Context, opts options, desired domai
 		return r.writeResult(opts, commandResult{Command: "apply", Status: reconcile.Status(plan), Plan: plan, Handoff: handoff, Hermes: metadata})
 	}
 	secrets := map[string]string{}
+	r.ensureCredentials()
 	if r.Credentials != nil {
 		if planned, ok := r.Credentials.(PlanCredentialSource); ok {
 			secrets, err = planned.ResolveForPlan(ctx, desired, plan.Actions, !opts.nonInteractive)
@@ -245,9 +272,7 @@ func (r Runner) runDesiredApply(ctx context.Context, opts options, desired domai
 			return r.fail(opts, err, nil)
 		}
 	}
-	if !opts.nonInteractive && !opts.jsonOutput {
-		fmt.Fprintln(r.Out, "Обработка данных ... подождите")
-	}
+	ctx = withMutationProgress(ctx, r.Out, !opts.jsonOutput)
 	appliedPlan, err := r.Service.Apply(ctx, desired, update, ApplyInputs{Secrets: secrets, HermesInstaller: opts.installerPath, CertificateArchive: opts.certificates})
 	if err != nil {
 		return r.fail(opts, err, secretValues(secrets))
@@ -312,15 +337,94 @@ func (r *Runner) withDefaults() {
 	if r.Err == nil {
 		r.Err = os.Stderr
 	}
-	if r.Environments == nil {
-		r.Environments = environment.NewInspector()
-	}
 	if r.GOOS == "" {
 		r.GOOS = runtime.GOOS
 	}
 	if r.Executable == nil {
 		r.Executable = os.Executable
 	}
+}
+
+func (r *Runner) withOperationalDefaults() {
+	if r.Environments == nil {
+		r.Environments = environment.NewInspector()
+	}
+}
+
+func (r *Runner) environmentInspector() environment.Inspector {
+	r.withOperationalDefaults()
+	return r.Environments
+}
+
+func (r *Runner) ensureService() {
+	if r.Service == nil && r.ServiceFactory != nil {
+		r.Service = r.ServiceFactory()
+	}
+}
+
+func (r *Runner) ensureCredentials() {
+	if r.Credentials == nil && r.CredentialFactory != nil {
+		r.Credentials = r.CredentialFactory()
+	}
+}
+
+func isPublicQuery(command string) bool {
+	switch command {
+	case "catalog", "detect-app", "environments":
+		return true
+	default:
+		return false
+	}
+}
+
+func (r *Runner) runPublicQuery(ctx context.Context, opts options) int {
+	if !opts.jsonOutput {
+		return r.fail(opts, newOperationalError(codeInputRequired, "--json", nil), nil)
+	}
+	switch opts.command {
+	case "catalog":
+		return r.writePublicJSON(publicCatalog())
+	case "detect-app":
+		result, err := r.publicDetection(ctx, opts.application, opts.appInstalled)
+		if err != nil {
+			return r.fail(opts, publicDetectionError(err), nil)
+		}
+		return r.writePublicJSON(result)
+	case "environments":
+		result, err := r.publicEnvironments(ctx, opts.application)
+		if err != nil {
+			return r.fail(opts, publicEnvironmentError(err), nil)
+		}
+		return r.writePublicJSON(result)
+	default:
+		return r.fail(opts, fmt.Errorf("unknown command %q", opts.command), nil)
+	}
+}
+
+func publicDetectionError(err error) error {
+	if errors.Is(err, apps.ErrApplicationRequired) || errors.Is(err, context.Canceled) {
+		return err
+	}
+	var operational *operationalError
+	if errors.As(err, &operational) && operational.Code == codeInputRequired {
+		return err
+	}
+	return &publicQueryError{Code: codeAIAppInspectionFailed, Message: "selected AI application could not be verified", Cause: err}
+}
+
+func publicEnvironmentError(err error) error {
+	if errors.Is(err, apps.ErrApplicationRequired) || errors.Is(err, context.Canceled) {
+		return err
+	}
+	return &publicQueryError{Code: codeWorkspaceInspectionFailed, Message: "environment discovery failed", Cause: err}
+}
+
+func (r Runner) writePublicJSON(result any) int {
+	if err := json.NewEncoder(r.Out).Encode(result); err != nil {
+		fmt.Fprintln(r.Err, "OUTPUT_FAILED")
+		return ExitFailure
+	}
+	return ExitOK
 }
 
 func (r Runner) writeResult(opts options, result commandResult) int {
@@ -377,12 +481,24 @@ func handoffFor(desired domain.DesiredState) (string, error) {
 func (r Runner) fail(opts options, err error, secrets []string) int {
 	message := redact(err.Error(), secrets)
 	code, exit := errorIdentity(err)
+	if exit == ExitApplicationRequired && !opts.nonInteractive && !opts.jsonOutput {
+		fmt.Fprintln(r.Err, applicationSetupInstructions(opts.application))
+		return exit
+	}
 	if opts.jsonOutput {
 		_ = json.NewEncoder(r.Err).Encode(map[string]any{"error": code, "message": message})
 	} else {
 		fmt.Fprintf(r.Err, "%s: %s\n", code, message)
 	}
 	return exit
+}
+
+func applicationSetupInstructions(application string) string {
+	entry, err := catalog.LookupAIApplication(domain.AIApplication(application))
+	if err != nil {
+		return "Выбранное AI-приложение не установлено. Установите его, подключите языковую модель и повторите запуск TeamKit."
+	}
+	return fmt.Sprintf("%s не установлен.\nУстановите %s, подключите в нём языковую модель и повторите запуск TeamKit.\nПосле подготовки окружения откройте чат %s и вставьте туда инструкцию TeamKit из .teamkit\\handoff.txt.", entry.Label, entry.Label, entry.Label)
 }
 
 func secretValues(values map[string]string) []string {
@@ -402,4 +518,28 @@ func redact(message string, secrets []string) string {
 		}
 	}
 	return message
+}
+
+func (r Runner) runHermesContinuation(ctx context.Context, opts *options, q *questionnaire, session *registrySession) int {
+	if err := r.prepareHermesHome(ctx, opts, q); err != nil {
+		return r.fail(*opts, err, nil)
+	}
+	if err := r.discoverHermes(ctx, opts); err != nil {
+		if errors.Is(err, hermes.ErrExecutableNotFound) {
+			return r.writeHermesInstallHandoff(*opts)
+		}
+		return r.fail(*opts, err, nil)
+	}
+	installed, _ := strconv.ParseBool(opts.appInstalled)
+	if !installed {
+		return r.writeHermesInstallHandoff(*opts)
+	}
+	if r.Service == nil {
+		return r.fail(*opts, errors.New("SERVICE_REQUIRED"), nil)
+	}
+	desired, err := opts.desiredState()
+	if err != nil {
+		return r.fail(*opts, err, nil)
+	}
+	return r.runDesiredApply(ctx, *opts, desired, metadataFor(*opts), session)
 }

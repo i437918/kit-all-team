@@ -228,6 +228,12 @@ var releaseCandidateBinariesByVersion = map[string][]string{
 		"teamkit-v0.1.6-darwin-amd64",
 		"teamkit-v0.1.6-darwin-arm64",
 	},
+	"v0.1.7": {
+		"teamkit-v0.1.7-windows-amd64.exe",
+		"teamkit-v0.1.7-linux-amd64",
+		"teamkit-v0.1.7-darwin-amd64",
+		"teamkit-v0.1.7-darwin-arm64",
+	},
 }
 
 func (a *auditor) inspectCandidateBinary(location, path string, data []byte) {

@@ -161,6 +161,19 @@ type fakeReader struct {
 	labels []string
 }
 
+type fakeChooser struct {
+	actions map[string]StoredCredentialAction
+	keys    []string
+}
+
+func (c *fakeChooser) ChooseStoredCredential(_ context.Context, key string) (StoredCredentialAction, error) {
+	c.keys = append(c.keys, key)
+	if action := c.actions[key]; action != 0 {
+		return action, nil
+	}
+	return UseStoredCredential, nil
+}
+
 type blockingContextReader struct{ entered chan struct{} }
 
 func (blockingContextReader) ReadSecret(string) (string, error) {
@@ -207,12 +220,153 @@ func TestResolverUsesExistingAppLocalSecretsWithoutPrompt(t *testing.T) {
 	}
 }
 
+func TestResolverInteractiveHermes_OffersExactlyFiveStoredKeysInStableOrder(t *testing.T) {
+	wantKeys := []string{GitLabUsername, GitLabToken, PublicProviderAPIKey, JiraToken, ConfluenceToken}
+	stored := map[string]string{
+		GitLabUsername: "saved-user-canary", GitLabToken: "saved-token-canary",
+		PublicProviderAPIKey: "saved-provider-canary", JiraToken: "saved-jira-canary",
+		ConfluenceToken: "saved-confluence-canary", GitCAFile: "C:/optional/ca.pem",
+	}
+	store := &fakeStore{values: stored}
+	reader := &fakeReader{}
+	chooser := &fakeChooser{}
+	resolver := Resolver{
+		Home:  func(domain.DesiredState) (string, error) { return testutil.TempDir(t), nil },
+		Store: func(string) (SecretStore, error) { return store, nil }, Reader: reader, Chooser: chooser,
+	}
+	actions := []reconcile.Action{{Kind: reconcile.ActionSyncContent}, {Kind: reconcile.ActionConfigureApplication}}
+	got, err := resolver.ResolveForPlan(context.Background(), hermesDesired(t), actions, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(chooser.keys, wantKeys) {
+		t.Fatalf("chooser keys=%v want=%v", chooser.keys, wantKeys)
+	}
+	if len(reader.labels) != 0 || store.saved != nil {
+		t.Fatalf("use-stored prompted or saved: labels=%v saved=%v", reader.labels, store.saved)
+	}
+	if !reflect.DeepEqual(got, stored) {
+		t.Fatalf("values keys=%v want keys=%v", sortedKeys(got), sortedKeys(stored))
+	}
+	if !reflect.DeepEqual(store.loaded, [][]string{{GitLabUsername, GitLabToken, GitCAFile, PublicProviderAPIKey, JiraToken, ConfluenceToken}}) {
+		t.Fatalf("loaded=%v", store.loaded)
+	}
+}
+
+func TestResolverResolveForPlan_InteractiveHermesTraversesFiveForGitOnlyPlan(t *testing.T) {
+	wantKeys := []string{GitLabUsername, GitLabToken, PublicProviderAPIKey, JiraToken, ConfluenceToken}
+	stored := map[string]string{
+		GitLabUsername: "saved-user", GitLabToken: "saved-token",
+		PublicProviderAPIKey: "saved-provider", JiraToken: "saved-jira",
+		ConfluenceToken: "saved-confluence", GitCAFile: "C:/optional/ca.pem",
+	}
+	store := &fakeStore{values: stored}
+	chooser := &fakeChooser{}
+	resolver := Resolver{
+		Home:  func(domain.DesiredState) (string, error) { return testutil.TempDir(t), nil },
+		Store: func(string) (SecretStore, error) { return store, nil }, Chooser: chooser,
+	}
+	got, err := resolver.ResolveForPlan(context.Background(), hermesDesired(t), []reconcile.Action{{Kind: reconcile.ActionSyncContent}}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(chooser.keys, wantKeys) {
+		t.Fatalf("chooser keys=%v want=%v", chooser.keys, wantKeys)
+	}
+	if !reflect.DeepEqual(store.loaded, [][]string{{GitLabUsername, GitLabToken, GitCAFile, PublicProviderAPIKey, JiraToken, ConfluenceToken}}) {
+		t.Fatalf("loaded=%v", store.loaded)
+	}
+	if !reflect.DeepEqual(got, stored) || store.saved != nil {
+		t.Fatalf("values=%v saved=%v", sortedKeys(got), store.saved)
+	}
+}
+
+func TestResolverInteractiveHermes_UseReplaceAndMissingPersistOnlyChanges(t *testing.T) {
+	stored := map[string]string{
+		GitLabUsername: "saved-user-canary", GitLabToken: "saved-token-canary",
+		JiraToken: "saved-jira-canary", ConfluenceToken: "saved-confluence-canary",
+	}
+	store := &fakeStore{values: stored}
+	reader := &fakeReader{values: []string{"replacement-token-canary", "missing-provider-canary", "replacement-confluence-canary"}}
+	chooser := &fakeChooser{actions: map[string]StoredCredentialAction{
+		GitLabUsername:  UseStoredCredential,
+		GitLabToken:     ReplaceStoredCredential,
+		JiraToken:       UseStoredCredential,
+		ConfluenceToken: ReplaceStoredCredential,
+	}}
+	resolver := Resolver{
+		Home:  func(domain.DesiredState) (string, error) { return testutil.TempDir(t), nil },
+		Store: func(string) (SecretStore, error) { return store, nil }, Reader: reader, Chooser: chooser,
+	}
+	actions := []reconcile.Action{{Kind: reconcile.ActionSyncDatabase}, {Kind: reconcile.ActionConfigureApplication}}
+	got, err := resolver.ResolveForPlan(context.Background(), hermesDesired(t), actions, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(chooser.keys, []string{GitLabUsername, GitLabToken, JiraToken, ConfluenceToken}) {
+		t.Fatalf("chooser keys=%v", chooser.keys)
+	}
+	if !reflect.DeepEqual(reader.labels, []string{GitLabToken, PublicProviderAPIKey, ConfluenceToken}) {
+		t.Fatalf("reader labels=%v", reader.labels)
+	}
+	wantSaved := map[string]string{
+		GitLabToken:      "replacement-token-canary",
+		PublicProviderAPIKey: "missing-provider-canary",
+		ConfluenceToken:  "replacement-confluence-canary",
+	}
+	if !reflect.DeepEqual(store.saved, wantSaved) {
+		t.Fatalf("saved=%v want=%v", store.saved, wantSaved)
+	}
+	if got[GitLabUsername] != stored[GitLabUsername] || got[JiraToken] != stored[JiraToken] {
+		t.Fatalf("use-stored values changed: keys=%v", sortedKeys(got))
+	}
+	if _, prompted := got[GitCAFile]; prompted || containsString(reader.labels, GitCAFile) || containsString(chooser.keys, GitCAFile) {
+		t.Fatalf("optional CA entered credential flow: values=%v reader=%v chooser=%v", sortedKeys(got), reader.labels, chooser.keys)
+	}
+}
+
+func TestResolverInteractiveHermes_NilChooserOrReplacementReaderFailsClosed(t *testing.T) {
+	stored := map[string]string{
+		GitLabUsername: "saved-user-canary", GitLabToken: "saved-token-canary",
+		PublicProviderAPIKey: "saved-provider-canary", JiraToken: "saved-jira-canary",
+		ConfluenceToken: "saved-confluence-canary",
+	}
+	for _, test := range []struct {
+		name    string
+		chooser StoredCredentialChooser
+		want    string
+	}{
+		{"missing chooser", nil, "CREDENTIAL_CHOOSER_REQUIRED: " + GitLabUsername},
+		{"replacement without reader", &fakeChooser{actions: map[string]StoredCredentialAction{GitLabUsername: ReplaceStoredCredential}}, "CREDENTIAL_READER_REQUIRED: " + GitLabUsername},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := &fakeStore{values: stored}
+			resolver := Resolver{
+				Home:  func(domain.DesiredState) (string, error) { return testutil.TempDir(t), nil },
+				Store: func(string) (SecretStore, error) { return store, nil }, Chooser: test.chooser,
+			}
+			_, err := resolver.Resolve(context.Background(), hermesDesired(t), true)
+			if err == nil || err.Error() != test.want {
+				t.Fatalf("error=%v want=%q", err, test.want)
+			}
+			if store.saved != nil {
+				t.Fatalf("nil dependency persisted values: %v", store.saved)
+			}
+			for _, canary := range stored {
+				if strings.Contains(err.Error(), canary) {
+					t.Fatalf("error leaked stored value: %v", err)
+				}
+			}
+		})
+	}
+}
+
 func TestResolverPromptsMaskedForMissingValuesAndPersistsThem(t *testing.T) {
 	store := &fakeStore{values: map[string]string{GitLabUsername: "dmitry.pavlov"}}
 	reader := &fakeReader{values: []string{"git-token", "llm-key", "jira-token", "confluence-token"}}
 	resolver := Resolver{
 		Home:  func(domain.DesiredState) (string, error) { return testutil.TempDir(t), nil },
-		Store: func(string) (SecretStore, error) { return store, nil }, Reader: reader,
+		Store: func(string) (SecretStore, error) { return store, nil }, Reader: reader, Chooser: &fakeChooser{},
 	}
 	got, err := resolver.Resolve(context.Background(), hermesDesired(t), true)
 	if err != nil {
@@ -224,7 +378,7 @@ func TestResolverPromptsMaskedForMissingValuesAndPersistsThem(t *testing.T) {
 	if !reflect.DeepEqual(reader.labels, []string{GitLabToken, PublicProviderAPIKey, "TEAMKIT_PUBLIC_ISSUES_KEY", "TEAMKIT_PUBLIC_WIKI_KEY"}) {
 		t.Fatalf("prompt labels=%v", reader.labels)
 	}
-	if store.saved[GitLabUsername] != "dmitry.pavlov" || store.saved[GitLabToken] == "" {
+	if _, exists := store.saved[GitLabUsername]; exists || store.saved[GitLabToken] == "" {
 		t.Fatalf("saved keys=%v", sortedKeys(store.saved))
 	}
 }
@@ -313,4 +467,13 @@ func hermesDesired(t *testing.T) domain.DesiredState {
 		t.Fatal(err)
 	}
 	return desired
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }

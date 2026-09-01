@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION=${1:-v0.1.6}
+VERSION=${1:-v0.1.8}
 OUTPUT_DIR=${2:-dist}
 REPOSITORY_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 DESTINATION="$REPOSITORY_ROOT/$OUTPUT_DIR"

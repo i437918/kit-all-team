@@ -72,12 +72,43 @@ func displayCredentialLabel(label string) string {
 	case GitLabToken:
 		return "Токен Gitlab"
 	case PublicProviderAPIKey:
-		return "Токен LLM"
+		return "AI_TOKEN"
 	case JiraToken:
 		return "Токен Jira"
 	case ConfluenceToken:
 		return "Токен Confluence"
 	default:
 		return label
+	}
+}
+
+func credentialQuestionName(key string) string {
+	if key == PublicProviderAPIKey {
+		return "AI_TOKEN"
+	}
+	return key
+}
+
+func (r *ConsoleReader) ChooseStoredCredential(ctx context.Context, key string) (StoredCredentialAction, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	if r == nil || r.output == nil || r.lines == nil {
+		return 0, fmt.Errorf("credential console is unavailable")
+	}
+	if _, err := fmt.Fprintf(r.output, "%s уже сохранён:\n1. Использовать сохранённое значение\n2. Ввести новое значение\nВведите номер ответа: ", credentialQuestionName(key)); err != nil {
+		return 0, err
+	}
+	line, err := r.lines.ReadString('\n')
+	if err != nil && err != io.EOF {
+		return 0, err
+	}
+	switch strings.TrimSpace(line) {
+	case "1":
+		return UseStoredCredential, nil
+	case "2":
+		return ReplaceStoredCredential, nil
+	default:
+		return 0, fmt.Errorf("credential action is invalid")
 	}
 }

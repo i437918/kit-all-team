@@ -408,7 +408,7 @@ func (s *Service) Apply(ctx context.Context, desired domain.DesiredState, update
 	if err := persistWorkspaceState(desired); err != nil {
 		return plan, err
 	}
-	operation, cleanup, err := s.mutation(desired, inputs, values, true, false, runtimeContract)
+	operation, cleanup, err := s.mutation(ctx, desired, inputs, values, true, false, runtimeContract)
 	if err != nil {
 		return plan, redactError(err, valueList(values))
 	}
@@ -670,7 +670,7 @@ func (s *Service) updateExpected(ctx context.Context, expected domain.DesiredSta
 	return plan, nil
 }
 
-func (s *Service) mutation(desired domain.DesiredState, inputs cli.ApplyInputs, values map[string]string, save, forceAskPass bool, runtimeContract hermes.RuntimeContract) (engine.Engine, func() error, error) {
+func (s *Service) mutation(ctx context.Context, desired domain.DesiredState, inputs cli.ApplyInputs, values map[string]string, save, forceAskPass bool, runtimeContract hermes.RuntimeContract) (engine.Engine, func() error, error) {
 	if _, err := s.validateMutationHomeOverlap(desired); err != nil {
 		return engine.Engine{}, nil, err
 	}
@@ -679,11 +679,31 @@ func (s *Service) mutation(desired domain.DesiredState, inputs cli.ApplyInputs, 
 		return engine.Engine{}, nil, err
 	}
 	if save && len(values) > 0 {
-		if _, err := store.Save(values); err != nil {
+		if err := saveSuppliedCredentials(ctx, desired, store, values); err != nil {
 			return engine.Engine{}, nil, err
 		}
 	}
 	return s.mutationWithStoreExecutable(desired, inputs, values, store, forceAskPass, runtimeContract)
+}
+
+func saveSuppliedCredentials(ctx context.Context, desired domain.DesiredState, store credentials.SecretStore, values map[string]string) error {
+	if len(values) == 0 {
+		return nil
+	}
+	report := desired.Application() == domain.AppHermes
+	if report {
+		reconcile.ReportProgress(ctx, reconcile.ProgressEvent{Target: reconcile.ProgressHermesCredentials, Phase: reconcile.ProgressStarted, Application: string(desired.Application())})
+	}
+	if _, err := store.Save(values); err != nil {
+		if report {
+			reconcile.ReportProgress(ctx, reconcile.ProgressEvent{Target: reconcile.ProgressHermesCredentials, Phase: reconcile.ProgressFailed, Application: string(desired.Application())})
+		}
+		return err
+	}
+	if report {
+		reconcile.ReportProgress(ctx, reconcile.ProgressEvent{Target: reconcile.ProgressHermesCredentials, Phase: reconcile.ProgressCompleted, Application: string(desired.Application())})
+	}
+	return nil
 }
 
 func (s *Service) mutationWithStoreExecutable(desired domain.DesiredState, inputs cli.ApplyInputs, values map[string]string, store credentials.SecretStore, forceAskPass bool, runtimeContract hermes.RuntimeContract) (engine.Engine, func() error, error) {
@@ -743,7 +763,11 @@ func (s *Service) mutationWithStoreExecutable(desired domain.DesiredState, input
 	var profileStore credentials.SecretStore
 	var profile bootstrap.ProfilePort
 	profileEnvironment := map[string]string{}
+	hermesExecutable := runtimeContract.Info.Executable
 	if desired.Application() == domain.AppHermes {
+		if !desired.AppInstalled() {
+			hermesExecutable = managedHermesExecutable(desired)
+		}
 		profileHome := filepath.Join(desired.HermesHome(), "profiles", hermesProfileIdentity(desired))
 		profileStore, err = s.secretStoreFactory()(profileHome)
 		if err != nil {
@@ -755,7 +779,7 @@ func (s *Service) mutationWithStoreExecutable(desired domain.DesiredState, input
 			credentials.JiraToken:        values[credentials.JiraToken],
 			credentials.ConfluenceToken:  values[credentials.ConfluenceToken],
 		}
-		profile = s.hermesProfile(desired, runtimeContract.Info.Executable)
+		profile = s.hermesProfile(desired, hermesExecutable)
 	}
 	inputsForEffects := EffectInputs{
 		Git: git, Installer: installer, InstallerPath: installerPath,
@@ -763,7 +787,7 @@ func (s *Service) mutationWithStoreExecutable(desired domain.DesiredState, input
 		ProfileSecrets: profileStore, ProfileEnvironment: profileEnvironment, Profile: profile,
 		OfficeCLI:            officeCLI,
 		HermesEnvironment:    platform.ConfigureHermesHome,
-		HermesExecutable:     runtimeContract.Info.Executable,
+		HermesExecutable:     hermesExecutable,
 		RuntimeContract:      runtimeContract,
 		RuntimeProbe:         s.runtimeProbe(desired),
 		ToolchainMaterialize: s.options.ToolchainMaterialize,
@@ -776,6 +800,13 @@ func (s *Service) mutationWithStoreExecutable(desired domain.DesiredState, input
 		return engine.Engine{}, nil, err
 	}
 	return engine.Engine{Effects: mutationEffects, Store: persisted, Secrets: valueList(values)}, cleanup, nil
+}
+
+func managedHermesExecutable(desired domain.DesiredState) string {
+	if desired.OS() == domain.OSWindows {
+		return filepath.Join(desired.HermesHome(), "hermes-agent", "venv", "Scripts", "hermes.exe")
+	}
+	return filepath.Join(desired.HermesHome(), "hermes-agent", "venv", "bin", "hermes")
 }
 
 func (s *Service) loadDesired(kitHome string) (domain.DesiredState, error) {
@@ -917,7 +948,7 @@ func (s *Service) installerFor(desired domain.DesiredState, inputs cli.ApplyInpu
 		write:      s.privateWriter(),
 		process:    s.processRunner(),
 		ready:      s.options.ManagedInstallReady,
-		installDir: filepath.Join(desired.HermesHome(), ".teamkit", "hermes-agent-source"),
+		installDir: filepath.Join(desired.HermesHome(), "hermes-agent"),
 		hermesHome: desired.HermesHome(),
 		commit:     POSIXInstallerCommit,
 	}
@@ -1488,9 +1519,6 @@ func (s *Service) hermesProfile(desired domain.DesiredState, executable string) 
 	if s.options.HermesProfile != nil {
 		return s.options.HermesProfile
 	}
-	if !desired.AppInstalled() && desired.OS() != domain.OSWindows {
-		executable = filepath.Join(desired.HermesHome(), ".teamkit", "hermes-agent-source", "venv", "bin", "hermes")
-	}
 	return hermes.ProfileCLI{
 		Executable: executable,
 		Runner: hermesEnvironmentRunner{
@@ -1512,43 +1540,18 @@ func (s *Service) bindHermesRuntime(ctx context.Context, desired domain.DesiredS
 	if err != nil {
 		return domain.DesiredState{}, hermes.RuntimeContract{}, err
 	}
-	requiredVersion := desired.HermesVersion()
-	if observed.Version == "" {
-		requiredVersion = ""
-	}
-	executable, err := validateVerifiedHermesRuntime(desired, observed, requiredVersion)
+	executable, err := validateVerifiedHermesRuntime(desired, observed)
 	if err != nil {
 		return domain.DesiredState{}, hermes.RuntimeContract{}, err
 	}
 	contract := observed.Contract
 	if contract.Info.Executable == "" && s.options.ResolveHermesRuntime != nil {
-		contract = hermes.RuntimeContract{
-			Info:         hermes.RuntimeInfo{Executable: executable, InstallDir: filepath.Dir(executable), Version: observed.Version},
-			Identity:     hermes.RuntimeIdentity{InstallRootKey: "injected-runtime-root", ExecutableKey: "injected-runtime-executable"},
-			ConfigSchema: hermes.HermesConfigVersion, BundledInventorySHA256: strings.Repeat("0", 64),
-		}
+		contract = hermes.RuntimeContract{Info: hermes.RuntimeInfo{Executable: executable, InstallDir: filepath.Dir(executable)}, ConfigSchema: hermes.HermesConfigVersion}
 	}
-	if contract.Info.Executable != executable || contract.Info.Version != observed.Version || contract.ConfigSchema != 34 && contract.ConfigSchema != 37 {
+	if contract.Info.Executable != executable || contract.ConfigSchema <= 0 {
 		return domain.DesiredState{}, hermes.RuntimeContract{}, fmt.Errorf("HERMES_RUNTIME_DRIFT: runtime contract is missing or inconsistent")
 	}
-	if observed.Version == "" || desired.HermesVersion() != "" {
-		return desired, contract, nil
-	}
-	bound, err := domain.NewDesiredState(domain.DesiredStateInput{
-		OS:            desired.OS(),
-		Application:   desired.Application(),
-		AppInstalled:  desired.AppInstalled(),
-		KitHome:       desired.KitHome(),
-		HermesHome:    desired.HermesHome(),
-		HermesVersion: observed.Version,
-		Project:       desired.Project(),
-		Role:          desired.Role(),
-		Toolchain:     desired.Toolchain(),
-	})
-	if err != nil {
-		return domain.DesiredState{}, hermes.RuntimeContract{}, fmt.Errorf("HERMES_RUNTIME_DRIFT: observed version is invalid")
-	}
-	return bound, contract, nil
+	return desired, contract, nil
 }
 
 func (s *Service) resolveHermesRuntime(ctx context.Context, state domain.DesiredState) (hermes.DiscoveryResult, error) {
@@ -1680,7 +1683,7 @@ func sameDesiredStateExceptHermesVersion(left, right domain.DesiredState) bool {
 		left.Toolchain() == right.Toolchain()
 }
 
-func validateVerifiedHermesRuntime(desired domain.DesiredState, observed hermes.DiscoveryResult, requiredVersion string) (string, error) {
+func validateVerifiedHermesRuntime(desired domain.DesiredState, observed hermes.DiscoveryResult) (string, error) {
 	if !observed.Installed || strings.TrimSpace(observed.Executable) == "" {
 		return "", fmt.Errorf("HERMES_EXECUTABLE_UNVERIFIED: runtime is not installed")
 	}
@@ -1698,9 +1701,6 @@ func validateVerifiedHermesRuntime(desired domain.DesiredState, observed hermes.
 	}
 	if !equal {
 		return "", fmt.Errorf("HERMES_RUNTIME_DRIFT: HERMES_HOME changed")
-	}
-	if requiredVersion != "" && observed.Version != requiredVersion {
-		return "", fmt.Errorf("HERMES_RUNTIME_DRIFT: version changed")
 	}
 	return observed.Executable, nil
 }

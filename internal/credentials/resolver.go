@@ -50,10 +50,27 @@ type ContextSecretReader interface {
 }
 
 // Resolver loads existing values and prompts only for required missing values.
+var hermesCredentials = []string{GitLabUsername, GitLabToken, PublicProviderAPIKey, JiraToken, ConfluenceToken}
+
+// StoredCredentialAction selects how an existing stored credential is handled.
+type StoredCredentialAction uint8
+
+const (
+	// UseStoredCredential keeps the existing stored credential.
+	UseStoredCredential StoredCredentialAction = iota + 1
+	// ReplaceStoredCredential prompts for and stores a replacement credential.
+	ReplaceStoredCredential
+)
+
+// StoredCredentialChooser obtains the user's choice for an existing credential.
+type StoredCredentialChooser interface {
+	ChooseStoredCredential(context.Context, string) (StoredCredentialAction, error)
+}
 type Resolver struct {
-	Home   HomeResolver
-	Store  StoreFactory
-	Reader SecretReader
+	Home    HomeResolver
+	Store   StoreFactory
+	Reader  SecretReader
+	Chooser StoredCredentialChooser
 }
 
 // Resolve implements cli.CredentialSource.
@@ -79,6 +96,11 @@ func (r Resolver) ResolveForPlan(ctx context.Context, desired domain.DesiredStat
 	}
 	if !gitNeeded && !providerNeeded {
 		return map[string]string{}, nil
+	}
+	if interactive && desired.Application() == domain.AppHermes {
+		required := append([]string(nil), hermesCredentials...)
+		load := []string{GitLabUsername, GitLabToken, GitCAFile, PublicProviderAPIKey, JiraToken, ConfluenceToken}
+		return r.resolve(ctx, desired, required, load, true)
 	}
 	required := make([]string, 0, 5)
 	load := make([]string, 0, 6)
@@ -129,9 +151,31 @@ func (r Resolver) resolve(ctx context.Context, desired domain.DesiredState, requ
 	if len(missing) > 0 && r.Reader == nil {
 		return nil, fmt.Errorf("CREDENTIAL_READER_REQUIRED: %s", strings.Join(missing, ","))
 	}
-	for _, key := range missing {
+	changes := map[string]string{}
+	for _, key := range required {
 		if err := ctx.Err(); err != nil {
 			return nil, err
+		}
+		existing := strings.TrimSpace(values[key]) != ""
+		replace := !existing
+		if existing && interactive && desired.Application() == domain.AppHermes {
+			if r.Chooser == nil {
+				return nil, fmt.Errorf("CREDENTIAL_CHOOSER_REQUIRED: %s", key)
+			}
+			action, err := r.Chooser.ChooseStoredCredential(ctx, key)
+			if err != nil {
+				return nil, err
+			}
+			if action != UseStoredCredential && action != ReplaceStoredCredential {
+				return nil, fmt.Errorf("CREDENTIAL_ACTION_INVALID: %s", key)
+			}
+			replace = action == ReplaceStoredCredential
+		}
+		if !replace {
+			continue
+		}
+		if r.Reader == nil {
+			return nil, fmt.Errorf("CREDENTIAL_READER_REQUIRED: %s", key)
 		}
 		var value string
 		var err error
@@ -149,10 +193,10 @@ func (r Resolver) resolve(ctx context.Context, desired domain.DesiredState, requ
 		if value == "" || strings.ContainsAny(value, "\r\n") {
 			return nil, fmt.Errorf("CREDENTIAL_VALUE_INVALID: %s", key)
 		}
-		values[key] = value
+		values[key], changes[key] = value, value
 	}
-	if len(missing) > 0 {
-		if _, err := store.Save(values); err != nil {
+	if len(changes) > 0 {
+		if _, err := store.Save(changes); err != nil {
 			return nil, err
 		}
 	}

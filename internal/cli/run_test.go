@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/mi1man-cmd/kit-all-team/internal/apps"
+	"github.com/mi1man-cmd/kit-all-team/internal/catalog"
 	"github.com/mi1man-cmd/kit-all-team/internal/domain"
 	"github.com/mi1man-cmd/kit-all-team/internal/environment"
 	"github.com/mi1man-cmd/kit-all-team/internal/hermes"
@@ -39,6 +41,13 @@ type fakeService struct {
 	status                    reconcile.PlanStatus
 	statusPlan                reconcile.OperationPlan
 	statusErr                 error
+	progress                  []reconcile.ProgressEvent
+}
+
+func (f *fakeService) reportProgress(ctx context.Context) {
+	for _, event := range f.progress {
+		reconcile.ReportProgress(ctx, event)
+	}
 }
 
 func copyPlan(plan reconcile.OperationPlan) reconcile.OperationPlan {
@@ -55,8 +64,9 @@ func (f *fakeService) Plan(_ context.Context, desired domain.DesiredState, updat
 	return oneActionPlan(), f.err
 }
 
-func (f *fakeService) Apply(_ context.Context, desired domain.DesiredState, update reconcile.UpdateChoice, inputs ApplyInputs) (reconcile.OperationPlan, error) {
+func (f *fakeService) Apply(ctx context.Context, desired domain.DesiredState, update reconcile.UpdateChoice, inputs ApplyInputs) (reconcile.OperationPlan, error) {
 	f.command, f.desired, f.update, f.secrets, f.applies = "apply", desired, update, inputs.Secrets, f.applies+1
+	f.reportProgress(ctx)
 	if f.applyErr != nil {
 		return oneActionPlan(), f.applyErr
 	}
@@ -78,13 +88,15 @@ func (f *fakeService) Status(context.Context, string) (reconcile.PlanStatus, rec
 	return status, f.statusPlan, firstError(f.statusErr, f.err)
 }
 
-func (f *fakeService) Retry(context.Context, string) error {
+func (f *fakeService) Retry(ctx context.Context, _ string) error {
 	f.command, f.retries = "retry", f.retries+1
+	f.reportProgress(ctx)
 	return f.err
 }
 
-func (f *fakeService) Update(_ context.Context, _ string, update reconcile.UpdateChoice) (reconcile.OperationPlan, error) {
+func (f *fakeService) Update(ctx context.Context, _ string, update reconcile.UpdateChoice) (reconcile.OperationPlan, error) {
 	f.command, f.update, f.updates = "update", update, f.updates+1
+	f.reportProgress(ctx)
 	return f.updateResponse()
 }
 
@@ -113,6 +125,85 @@ type planCredentials struct {
 	calls   int
 }
 
+func TestOptions_IsHermesContinuationRequiresEveryCanonicalFlag(t *testing.T) {
+	args := []string{"apply", "--app-installed=true", "--os", "windows", "--app", "hermes", "--kit-home", `C:\Team Kit`, "--hermes-home", `C:\Hermes`, "--project", "asku", "--role", "analyst", "--toolchain", "cc_1c_skills", "--update", "none"}
+	opts, err := parseOptions(args, io.Discard)
+	if err != nil || !opts.isHermesContinuation() {
+		t.Fatalf("continuation=%t err=%v", opts.isHermesContinuation(), err)
+	}
+	for _, omitted := range []string{"--app-installed=true", "--os", "--app", "--kit-home", "--hermes-home", "--project", "--role", "--toolchain", "--update"} {
+		trimmed := make([]string, 0, len(args))
+		for i := 0; i < len(args); i++ {
+			if args[i] == omitted {
+				if omitted != "--app-installed=true" {
+					i++
+				}
+				continue
+			}
+			trimmed = append(trimmed, args[i])
+		}
+		got, parseErr := parseOptions(trimmed, io.Discard)
+		if parseErr == nil && got.isHermesContinuation() {
+			t.Fatalf("accepted incomplete continuation without %s", omitted)
+		}
+	}
+}
+
+func TestOptions_IsHermesContinuationRejectsNonInteractiveAndAppInstallAlias(t *testing.T) {
+	base := []string{"apply", "--app-installed=true", "--os", "windows", "--app", "hermes", "--kit-home", `C:\TeamKit`, "--hermes-home", `C:\Hermes`, "--project", "asku", "--role", "analyst", "--toolchain", "cc_1c_skills", "--update", "none"}
+	for _, args := range [][]string{append(append([]string(nil), base...), "--non-interactive"), append([]string{"apply", "--app-install=true"}, base[2:]...)} {
+		opts, err := parseOptions(args, io.Discard)
+		if err == nil && opts.isHermesContinuation() {
+			t.Fatalf("continuation accepted args=%v", args)
+		}
+	}
+	for _, replacement := range [][]string{
+		{"--kit-home", ""}, {"--hermes-home", ""}, {"--project", ""},
+		{"--role", ""}, {"--toolchain", ""}, {"--project", "unknown"},
+		{"--role", "unknown"}, {"--toolchain", "unknown"},
+	} {
+		args := append([]string(nil), base...)
+		for index := 0; index < len(args)-1; index++ {
+			if args[index] == replacement[0] {
+				args[index+1] = replacement[1]
+				break
+			}
+		}
+		opts, err := parseOptions(args, io.Discard)
+		if err == nil && opts.isHermesContinuation() {
+			t.Fatalf("continuation accepted %s=%q", replacement[0], replacement[1])
+		}
+	}
+}
+
+func TestOptions_IsHermesContinuationRequiresLiteralTrueAppInstalled(t *testing.T) {
+	for _, alias := range []string{"1", "t", "T", "TRUE", "True"} {
+		t.Run(alias, func(t *testing.T) {
+			args := continuationArgs(`C:\TeamKit`, `C:\Hermes`)
+			args[1] = "--app-installed=" + alias
+			opts, err := parseOptions(args, io.Discard)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if opts.isHermesContinuation() || opts.isHermesContinuationShape() {
+				t.Fatalf("alias %q accepted as canonical continuation", alias)
+			}
+		})
+	}
+}
+
+func TestFormatHermesContinuation_QuotesOnlyNonSecretSelectors(t *testing.T) {
+	opts := options{operatingSystem: "windows", application: "hermes", appInstalled: "true", kitHome: `C:\Team O'Kit`, hermesHome: `C:\Гермес O'Neil`, project: "asku", role: "analyst", toolchain: "cc_1c_skills", update: "none"}
+	got, err := formatHermesContinuation(`C:\Team O'Kit\teamkit.exe`, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"$env:HERMES_HOME = 'C:\\Гермес O''Neil'", "& 'C:\\Team O''Kit\\teamkit.exe' apply", "--kit-home 'C:\\Team O''Kit'", "--update none"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("command=%q missing %q", got, want)
+		}
+	}
+}
 func (p *planCredentials) Resolve(context.Context, domain.DesiredState, bool) (map[string]string, error) {
 	p.calls++
 	return map[string]string{}, nil
@@ -439,7 +530,7 @@ func TestRunApplyPrintsSecretFreeAlternativeApplicationHandoff(t *testing.T) {
 	}
 }
 
-func TestRunDesiredApplyPrintsProcessingMessageAfterCredentials(t *testing.T) {
+func TestRunDesiredApplyDoesNotPrintProcessingMessageWithoutRealProgress(t *testing.T) {
 	desired, err := domain.NewDesiredState(domain.DesiredStateInput{
 		OS: domain.OSLinux, Application: domain.AppCodex, AppInstalled: true,
 		KitHome: "/tmp/kit", Project: domain.ProjectWMS, Role: domain.RoleDeveloper,
@@ -455,8 +546,79 @@ func TestRunDesiredApplyPrintsProcessingMessageAfterCredentials(t *testing.T) {
 	if code := runner.runDesiredApply(context.Background(), options{}, desired, nil, nil); code != ExitOK {
 		t.Fatalf("exit=%d stderr=%q", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "Обработка данных ... подождите\n") {
+	if strings.Contains(stdout.String(), "Обработка данных ... подождите\n") {
 		t.Fatalf("stdout=%q", stdout.String())
+	}
+}
+
+func TestRunMutationProgressIsLazyExactAndSecretFree(t *testing.T) {
+	canary := "progress-secret-canary"
+	service := &fakeService{hasPlan: true, plan: oneActionPlan(), progress: []reconcile.ProgressEvent{
+		{Phase: reconcile.ProgressStarted, Action: reconcile.ActionSyncContent},
+		{Phase: reconcile.ProgressCompleted, Action: reconcile.ActionSyncContent},
+	}}
+	var stdout, stderr bytes.Buffer
+	runner := Runner{Service: service, Credentials: fixedCredentials{"TEAMKIT_SOURCE_TOKEN": canary}, In: strings.NewReader(""), Out: &stdout, Err: &stderr}
+	if code := runner.Run(context.Background(), linuxArgs("apply")); code != ExitOK {
+		t.Fatalf("exit=%d stderr=%q", code, stderr.String())
+	}
+	want := "Обработка данных ... подождите\nШаблоны Team Kit .. копирование из GitLab\nШаблоны Team Kit .. готово\n"
+	if strings.Count(stdout.String(), "Обработка данных ... подождите") != 1 || !strings.Contains(stdout.String(), want) {
+		t.Fatalf("stdout=%q", stdout.String())
+	}
+	if strings.Contains(stdout.String()+stderr.String(), canary) {
+		t.Fatalf("progress leaked secret: stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+}
+
+func TestRunMutationProgressSupportsNonInteractiveUpdateRetryAndStaysSilentForJSON(t *testing.T) {
+	events := []reconcile.ProgressEvent{
+		{Phase: reconcile.ProgressStarted, Action: reconcile.ActionSyncDatabase},
+		{Phase: reconcile.ProgressCompleted, Action: reconcile.ActionSyncDatabase},
+	}
+	for _, test := range []struct {
+		name string
+		args []string
+		json bool
+	}{
+		{name: "update", args: []string{"update", "--kit-home", "/tmp/kit", "--target", "database"}},
+		{name: "retry", args: []string{"retry", "--kit-home", "/tmp/kit"}},
+		{name: "json apply", args: append(linuxArgs("apply"), "--json"), json: true},
+		{name: "json update", args: []string{"update", "--kit-home", "/tmp/kit", "--target", "database", "--json"}, json: true},
+		{name: "json retry", args: []string{"retry", "--kit-home", "/tmp/kit", "--json"}, json: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			service := &fakeService{hasPlan: true, plan: oneActionPlan(), progress: events}
+			var stdout, stderr bytes.Buffer
+			runner := Runner{Service: service, In: strings.NewReader(""), Out: &stdout, Err: &stderr}
+			if code := runner.Run(context.Background(), test.args); code != ExitOK {
+				t.Fatalf("exit=%d stderr=%q", code, stderr.String())
+			}
+			if test.json {
+				if strings.Contains(stdout.String(), "Обработка данных") || strings.Contains(stdout.String(), "База данных проекта") {
+					t.Fatalf("json stdout contains progress: %q", stdout.String())
+				}
+				if !json.Valid(stdout.Bytes()) {
+					t.Fatalf("json stdout is not one valid document: %q", stdout.String())
+				}
+				return
+			}
+			if !strings.Contains(stdout.String(), "База данных проекта .. копирование из GitLab\nБаза данных проекта .. готово\n") {
+				t.Fatalf("stdout=%q", stdout.String())
+			}
+		})
+	}
+}
+
+func TestRunApplyNoOpHasNoProgressHeader(t *testing.T) {
+	service := &fakeService{hasPlan: true, plan: reconcile.OperationPlan{}}
+	var stdout bytes.Buffer
+	runner := Runner{Service: service, In: strings.NewReader(""), Out: &stdout, Err: io.Discard}
+	if code := runner.Run(context.Background(), linuxArgs("apply")); code != ExitOK {
+		t.Fatalf("exit=%d", code)
+	}
+	if strings.Contains(stdout.String(), "Обработка данных") {
+		t.Fatalf("no-op stdout=%q", stdout.String())
 	}
 }
 func TestRunMapsMissingAlternativeApplicationToStableExit(t *testing.T) {
@@ -510,8 +672,24 @@ func TestRunInteractiveAdd_AllMissingAlternativeApplicationsExitBeforeWorkspace(
 			var out, errOut bytes.Buffer
 			runner := Runner{Service: service, Credentials: credentials, Registry: store, Environments: inspector, In: strings.NewReader(input), Out: &out, Err: &errOut}
 			code := runner.Run(context.Background(), []string{"apply", "--kit-home", root})
-			if code != ExitApplicationRequired || !strings.HasPrefix(errOut.String(), "AI_APP_REQUIRED: ") {
+			if code != ExitApplicationRequired {
 				t.Fatalf("exit=%d stderr=%q", code, errOut.String())
+			}
+			entry, err := catalog.LookupAIApplication(domain.AIApplication(application))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range []string{
+				entry.Label + " не установлен.",
+				"Установите " + entry.Label + ", подключите в нём языковую модель и повторите запуск TeamKit.",
+				"После подготовки окружения откройте чат " + entry.Label + " и вставьте туда инструкцию TeamKit из .teamkit\\handoff.txt.",
+			} {
+				if !strings.Contains(errOut.String(), want) {
+					t.Fatalf("stderr=%q does not contain %q", errOut.String(), want)
+				}
+			}
+			if strings.Contains(errOut.String(), "AI_APP_REQUIRED") {
+				t.Fatalf("interactive output exposes technical error code: %q", errOut.String())
 			}
 			if strings.Contains(out.String(), "Выберите набор skills:") {
 				t.Fatalf("toolchain prompt reached: %q", out.String())
@@ -686,7 +864,7 @@ func TestRunBareHelpExitsSuccessfully(t *testing.T) {
 	if code := runner.Run(context.Background(), []string{"--help"}); code != ExitOK {
 		t.Fatalf("exit=%d stderr=%q", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "teamkit plan|apply|status|retry|update|version") {
+	if !strings.Contains(stdout.String(), "teamkit plan|apply|status|retry|update|user-check|version") {
 		t.Fatalf("stdout=%q", stdout.String())
 	}
 }
@@ -747,4 +925,35 @@ func nativeOS() string {
 		return "macos"
 	}
 	return "linux"
+}
+
+func TestRunHermesContinuation_OnlyMissingExecutableGetsInstallHandoff(t *testing.T) {
+	base := testutil.TempDir(t)
+	kitHome := filepath.Join(base, "teamkit")
+	hermesHome := filepath.Join(base, "hermes")
+	args := []string{"apply", "--app-installed=true", "--os", "windows", "--app", "hermes", "--kit-home", kitHome, "--hermes-home", hermesHome, "--project", "asku", "--role", "analyst", "--toolchain", "cc_1c_skills", "--update", "none"}
+	for _, test := range []struct {
+		name      string
+		discovery error
+		handoff   bool
+	}{
+		{"missing", hermes.ErrExecutableNotFound, true},
+		{"unverified", hermes.ErrExecutableUnverified, false},
+		{"schema", hermes.ErrConfigSchemaUnsupported, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var out, errOut bytes.Buffer
+			runner := Runner{Service: &fakeService{}, In: strings.NewReader(""), Out: &out, Err: &errOut, Executable: func() (string, error) { return filepath.Join(kitHome, "teamkit.exe"), nil }, ConfigureHermesHome: func(string) error { return nil }, HermesDiscovery: func(context.Context, hermes.DiscoveryRequest) (hermes.DiscoveryResult, error) {
+				return hermes.DiscoveryResult{}, test.discovery
+			}}
+			code := runner.Run(context.Background(), args)
+			if test.handoff {
+				if code != ExitApplicationRequired || !strings.Contains(out.String(), "Отключите почтовый VPN") || errOut.Len() != 0 {
+					t.Fatalf("code=%d out=%q err=%q", code, out.String(), errOut.String())
+				}
+			} else if strings.Contains(out.String(), "Отключите почтовый VPN") || code == ExitApplicationRequired {
+				t.Fatalf("code=%d out=%q err=%q", code, out.String(), errOut.String())
+			}
+		})
+	}
 }

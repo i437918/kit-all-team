@@ -88,6 +88,55 @@ func TestService_PlanAndStatusAreReadOnlyAndDoNotOpenSecrets(t *testing.T) {
 	}
 }
 
+type progressSecretStore struct {
+	sequence *[]string
+	err      error
+	saves    int
+}
+
+func (s *progressSecretStore) Load(...string) (map[string]string, error) {
+	return map[string]string{}, nil
+}
+func (s *progressSecretStore) Save(map[string]string) (string, error) {
+	s.saves++
+	*s.sequence = append(*s.sequence, "save")
+	return "", s.err
+}
+
+func TestSaveSuppliedCredentialsReportsOnlyRealStoreCalls(t *testing.T) {
+	desired := testDesired(t, filepath.Join(testutil.TempDir(t), "kit"), domain.AppHermes, true, filepath.Join(testutil.TempDir(t), "hermes"))
+	for _, test := range []struct {
+		name   string
+		values map[string]string
+		save   error
+		want   []string
+	}{
+		{name: "success", values: map[string]string{credentials.PublicProviderAPIKey: "secret-canary"}, want: []string{"started", "save", "completed"}},
+		{name: "failure", values: map[string]string{credentials.PublicProviderAPIKey: "secret-canary"}, save: errors.New("save rejected"), want: []string{"started", "save", "failed"}},
+		{name: "empty", values: map[string]string{}, want: nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var sequence []string
+			store := &progressSecretStore{sequence: &sequence, err: test.save}
+			ctx := reconcile.WithProgressObserver(context.Background(), func(event reconcile.ProgressEvent) {
+				if event.Target == reconcile.ProgressHermesCredentials {
+					sequence = append(sequence, string(event.Phase))
+				}
+			})
+			err := saveSuppliedCredentials(ctx, desired, store, test.values)
+			if (err != nil) != (test.save != nil) {
+				t.Fatalf("err=%v", err)
+			}
+			if !reflect.DeepEqual(sequence, test.want) {
+				t.Fatalf("sequence=%v want=%v", sequence, test.want)
+			}
+			if strings.Contains(strings.Join(sequence, "|"), "secret-canary") {
+				t.Fatalf("progress leaked secret: %v", sequence)
+			}
+		})
+	}
+}
+
 func TestResolveOfficeCLIAsset_UsesFixedSupportedPlatformMatrix(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -521,14 +570,13 @@ func TestService_PlanRejectsExistingHermesToolchainHeadDriftBeforeSecrets(t *tes
 	}
 }
 
-func TestService_HermesRuntimeRejectsObservedDrift(t *testing.T) {
+func TestService_HermesRuntimeRejectsHomeOrInstallationDrift(t *testing.T) {
 	desired, err := domain.NewDesiredState(domain.DesiredStateInput{OS: domain.OSLinux, Application: domain.AppHermes, AppInstalled: true, KitHome: filepath.Join(testutil.TempDir(t), "kit"), HermesHome: filepath.Join(testutil.TempDir(t), "hermes"), HermesVersion: "0.20.2", Project: domain.ProjectAPA, Role: domain.RoleDeveloper, Toolchain: domain.ToolchainCC1CSkills})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for name, result := range map[string]hermes.DiscoveryResult{
 		"home":          {Installed: true, Home: filepath.Join(testutil.TempDir(t), "other"), Executable: "/hermes", Version: "0.20.2"},
-		"version":       {Installed: true, Home: desired.HermesHome(), Executable: "/hermes", Version: "0.20.3"},
 		"not installed": {Installed: false, Home: desired.HermesHome()},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -540,14 +588,14 @@ func TestService_HermesRuntimeRejectsObservedDrift(t *testing.T) {
 	}
 }
 
-func TestService_HermesRuntimeAcceptsMatchingAndLegacyVersion(t *testing.T) {
+func TestService_HermesRuntimeDoesNotBackfillObservedVersion(t *testing.T) {
 	for _, test := range []struct {
-		name, desiredVersion, observedVersion, returnedVersion string
+		name, desiredVersion, observedVersion string
 	}{
-		{name: "matching", desiredVersion: "0.20.2", observedVersion: "0.20.2", returnedVersion: "0.20.2"},
-		{name: "legacy backfill", observedVersion: "0.20.2", returnedVersion: "0.20.2"},
+		{name: "matching", desiredVersion: "0.20.2", observedVersion: "0.20.2"},
+		{name: "legacy remains unversioned", observedVersion: "0.20.2"},
 		{name: "unversioned new state"},
-		{name: "unversioned persisted state", desiredVersion: "0.20.2", returnedVersion: "0.20.2"},
+		{name: "unversioned persisted state", desiredVersion: "0.20.2"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			desired, err := domain.NewDesiredState(domain.DesiredStateInput{OS: domain.OSLinux, Application: domain.AppHermes, AppInstalled: true, KitHome: filepath.Join(testutil.TempDir(t), "kit"), HermesHome: filepath.Join(testutil.TempDir(t), "hermes"), HermesVersion: test.desiredVersion, Project: domain.ProjectAPA, Role: domain.RoleDeveloper, Toolchain: domain.ToolchainCC1CSkills})
@@ -558,10 +606,30 @@ func TestService_HermesRuntimeAcceptsMatchingAndLegacyVersion(t *testing.T) {
 				return hermes.DiscoveryResult{Installed: true, Home: desired.HermesHome(), Executable: "/verified/hermes", Version: test.observedVersion}, nil
 			}})
 			bound, contract, err := svc.bindHermesRuntime(context.Background(), desired)
-			if err != nil || contract.Info.Executable != "/verified/hermes" || bound.HermesVersion() != test.returnedVersion {
+			if err != nil || contract.Info.Executable != "/verified/hermes" || bound.HermesVersion() != test.desiredVersion {
 				t.Fatalf("bound=%#v contract=%#v err=%v", bound, contract, err)
 			}
 		})
+	}
+}
+
+func TestService_HermesRuntimeAcceptsConfigSchema38(t *testing.T) {
+	desired, err := domain.NewDesiredState(domain.DesiredStateInput{OS: domain.OSLinux, Application: domain.AppHermes, AppInstalled: true, KitHome: filepath.Join(testutil.TempDir(t), "kit"), HermesHome: filepath.Join(testutil.TempDir(t), "hermes"), Project: domain.ProjectAPA, Role: domain.RoleDeveloper, Toolchain: domain.ToolchainCC1CSkills})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const executable = "/verified/hermes"
+	want := hermes.RuntimeContract{
+		Info:         hermes.RuntimeInfo{Executable: executable, InstallDir: "/verified"},
+		Identity:     hermes.RuntimeIdentity{InstallRootKey: "runtime-root", ExecutableKey: "runtime-executable"},
+		ConfigSchema: 38, BundledSkills: []string{"hermes-default"}, BundledInventorySHA256: strings.Repeat("a", 64),
+	}
+	svc := New(Options{ResolveHermesRuntime: func(context.Context, domain.DesiredState) (hermes.DiscoveryResult, error) {
+		return hermes.DiscoveryResult{Installed: true, Home: desired.HermesHome(), Executable: executable, Contract: want}, nil
+	}})
+	bound, got, err := svc.bindHermesRuntime(context.Background(), desired)
+	if err != nil || got.ConfigSchema != 38 || bound.HermesVersion() != "" {
+		t.Fatalf("bound=%#v contract=%#v err=%v", bound, got, err)
 	}
 }
 
@@ -574,6 +642,50 @@ func TestService_ManagedInstallSkipsExternalRuntimeResolver(t *testing.T) {
 	got, err := svc.hermesExecutable(context.Background(), desired)
 	if err != nil || got != "" {
 		t.Fatalf("got=%q err=%v", got, err)
+	}
+}
+
+func TestService_ManagedFirstInstallProductionProfileUsesStandardExecutable(t *testing.T) {
+	desired := testDesired(t, filepath.Join(testutil.TempDir(t), "kit"), domain.AppHermes, false, filepath.Join(testutil.TempDir(t), "hermes"))
+	store := &recordingSecretStore{}
+	var gotName string
+	var gotArgs []string
+	svc := New(Options{
+		ApplicationHome: func(domain.DesiredState) (string, error) { return testutil.TempDir(t), nil },
+		SecretStore:     func(string) (credentials.SecretStore, error) { return store, nil },
+		ManagedCertificateBundle: func(home, _ string) (string, bool, error) {
+			return filepath.Join(home, "certs", "ca-bundle.pem"), true, nil
+		},
+		Process: platform.ProcessRunnerFunc(func(_ context.Context, name string, args []string) error {
+			gotName, gotArgs = name, append([]string(nil), args...)
+			return nil
+		}),
+	})
+
+	operation, cleanup, err := svc.mutationWithStoreExecutable(desired, cli.ApplyInputs{}, nil, store, false, hermes.RuntimeContract{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	owned, ok := operation.Effects.(ownershipEffects)
+	if !ok {
+		t.Fatalf("effects type = %T, want default ownership effects", operation.Effects)
+	}
+	effects, ok := owned.Effects.(*bootstrap.Effects)
+	if !ok {
+		t.Fatalf("inner effects type = %T, want *bootstrap.Effects", owned.Effects)
+	}
+	profile, ok := effects.Profile.(hermes.ProfileCLI)
+	if !ok {
+		t.Fatalf("profile type = %T, want production hermes.ProfileCLI", effects.Profile)
+	}
+	identity := hermesProfileIdentity(desired)
+	if err := profile.Create(context.Background(), identity); err != nil {
+		t.Fatalf("post-install profile create: %v", err)
+	}
+	want := filepath.Join(desired.HermesHome(), "hermes-agent", "venv", "bin", "hermes")
+	if gotName != want || !reflect.DeepEqual(gotArgs, []string{"profile", "create", identity, "--no-alias"}) {
+		t.Fatalf("profile command = %q %#v, want %q profile create", gotName, gotArgs, want)
 	}
 }
 
@@ -2338,7 +2450,7 @@ func TestService_POSIXInstallerPinsFixedInvocation(t *testing.T) {
 		WritePrivate: func(path string, _ []byte) error { return workspace.WriteFileAtomic(path, []byte("fixture"), 0o600) },
 		Process: platform.ProcessRunnerFunc(func(_ context.Context, name string, args []string) error {
 			processName, processArgs = name, append([]string(nil), args...)
-			checkout := filepath.Join(desiredPOSIX.HermesHome(), ".teamkit", "hermes-agent-source")
+			checkout := filepath.Join(desiredPOSIX.HermesHome(), "hermes-agent")
 			if err := os.MkdirAll(filepath.Join(checkout, ".git"), 0o700); err != nil {
 				return err
 			}
@@ -2369,7 +2481,7 @@ func TestService_POSIXInstallerPinsFixedInvocation(t *testing.T) {
 	}
 	wantArgs := []string{
 		path,
-		"--dir", filepath.Join(desiredPOSIX.HermesHome(), ".teamkit", "hermes-agent-source"),
+		"--dir", filepath.Join(desiredPOSIX.HermesHome(), "hermes-agent"),
 		"--hermes-home", desiredPOSIX.HermesHome(),
 		"--commit", POSIXInstallerCommit, "--force-commit",
 		"--skip-setup", "--non-interactive",

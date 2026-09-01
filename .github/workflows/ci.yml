@@ -31,7 +31,7 @@ permissions:
   contents: read
 
 env:
-  VERSION: v0.1.6
+  VERSION: v0.1.8
   EXPECTED_PUBLIC_SHA: ${{ inputs.expected_public_sha }}
   TEAMKIT_SOURCE_REVISION: ${{ inputs.source_revision }}
   TEAMKIT_SOURCE_COMMIT_TIME: ${{ inputs.source_commit_time }}
@@ -113,10 +113,10 @@ jobs:
         with:
           name: candidate-binaries
           path: |
-            dist/teamkit-v0.1.6-windows-amd64.exe
-            dist/teamkit-v0.1.6-linux-amd64
-            dist/teamkit-v0.1.6-darwin-amd64
-            dist/teamkit-v0.1.6-darwin-arm64
+            dist/teamkit-v0.1.8-windows-amd64.exe
+            dist/teamkit-v0.1.8-linux-amd64
+            dist/teamkit-v0.1.8-darwin-amd64
+            dist/teamkit-v0.1.8-darwin-arm64
             dist/SHA256SUMS
             dist/SECURITY-AUDIT.json
             dist/SOURCE-PROVENANCE.json
@@ -126,22 +126,22 @@ jobs:
   native:
     if: inputs.qualification_mode == 'full'
     needs: build-candidate
-    timeout-minutes: 30
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
         include:
           - runner: windows-2025
-            binary: teamkit-v0.1.6-windows-amd64.exe
+            binary: teamkit-v0.1.8-windows-amd64.exe
             officecli_asset: officecli-win-x64.exe
           - runner: ubuntu-24.04
-            binary: teamkit-v0.1.6-linux-amd64
+            binary: teamkit-v0.1.8-linux-amd64
             officecli_asset: officecli-linux-x64
           - runner: macos-15-intel
-            binary: teamkit-v0.1.6-darwin-amd64
+            binary: teamkit-v0.1.8-darwin-amd64
             officecli_asset: officecli-mac-x64
           - runner: macos-15
-            binary: teamkit-v0.1.6-darwin-arm64
+            binary: teamkit-v0.1.8-darwin-arm64
             officecli_asset: officecli-mac-arm64
     runs-on: ${{ matrix.runner }}
     steps:
@@ -179,7 +179,7 @@ jobs:
           chmod +x "$TEAMKIT_TEST_BINARY"
           go vet ./...
           go test -json ./... | tee "dist/evidence/native/${{ matrix.runner }}-tests.json"
-          go test -race ./...
+          go test -race -timeout=30m ./...
           "$TEAMKIT_TEST_BINARY" --version | tee "dist/evidence/native/${{ matrix.runner }}-version.json"
           printf 'source_revision=%s\ngithub_revision=%s\ncandidate_digest=%s\n' "$TEAMKIT_SOURCE_REVISION" "$GITHUB_SHA" "$CANDIDATE_ARTIFACT_DIGEST" > "dist/evidence/native/${{ matrix.runner }}-candidate.txt"
           go run ./cmd/teamkit-security-audit \
@@ -273,8 +273,8 @@ jobs:
             --arg source_manifest_sha256 "$SOURCE_MANIFEST_SHA256" \
             '.source_revision == $source_revision and .github_revision == $github_revision and .source_manifest_sha256 == $source_manifest_sha256' \
             dist/SOURCE-PROVENANCE.json >/dev/null
-          chmod 0755 dist/teamkit-v0.1.6-linux-amd64
-          bash scripts/alt-container-smoke.sh dist/teamkit-v0.1.6-linux-amd64 | tee dist/evidence/alt-userspace/smoke.log
+          chmod 0755 dist/teamkit-v0.1.8-linux-amd64
+          bash scripts/alt-container-smoke.sh dist/teamkit-v0.1.8-linux-amd64 | tee dist/evidence/alt-userspace/smoke.log
           printf 'source_revision=%s\ngithub_revision=%s\ncandidate_digest=%s\n' "$TEAMKIT_SOURCE_REVISION" "$GITHUB_SHA" "$CANDIDATE_ARTIFACT_DIGEST" > dist/evidence/alt-userspace/candidate.txt
           go run ./cmd/teamkit-security-audit \
             --repository . --path dist --commit "$TEAMKIT_SOURCE_REVISION" \

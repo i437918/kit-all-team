@@ -155,6 +155,7 @@ func (e Engine) validateContract(plan reconcile.OperationPlan) error {
 
 func (e Engine) run(ctx context.Context, desired domain.DesiredState, plan reconcile.OperationPlan, actions []reconcile.Action, receipt *reconcile.Receipt) error {
 	for _, action := range actions {
+		e.report(ctx, desired, action, reconcile.ProgressStarted)
 		err := e.Effects.Apply(ctx, desired, action)
 		status := reconcile.EffectSucceeded
 		diagnostic := ""
@@ -163,16 +164,26 @@ func (e Engine) run(ctx context.Context, desired domain.DesiredState, plan recon
 			diagnostic = err.Error()
 		}
 		if recordErr := receipt.Record(action.ID, status, diagnostic); recordErr != nil {
+			e.report(ctx, desired, action, reconcile.ProgressFailed)
 			return recordErr
 		}
 		if saveErr := e.saveOperation(plan, receipt); saveErr != nil {
+			e.report(ctx, desired, action, reconcile.ProgressFailed)
 			return saveErr
 		}
 		if err != nil {
+			e.report(ctx, desired, action, reconcile.ProgressFailed)
 			return fmt.Errorf("ACTION_FAILED %s: %w", action.ID, err)
 		}
+		e.report(ctx, desired, action, reconcile.ProgressCompleted)
 	}
 	return nil
+}
+
+func (e Engine) report(ctx context.Context, desired domain.DesiredState, action reconcile.Action, phase reconcile.ProgressPhase) {
+	reconcile.ReportProgress(ctx, reconcile.ProgressEvent{
+		Target: reconcile.ProgressAction, Phase: phase, Action: action.Kind, Application: string(desired.Application()),
+	})
 }
 
 func (e Engine) saveOperation(plan reconcile.OperationPlan, receipt *reconcile.Receipt) error {

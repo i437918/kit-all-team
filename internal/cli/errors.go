@@ -7,6 +7,7 @@ import (
 	"github.com/mi1man-cmd/kit-all-team/internal/apps"
 	"github.com/mi1man-cmd/kit-all-team/internal/domain"
 	"github.com/mi1man-cmd/kit-all-team/internal/gitx"
+	"github.com/mi1man-cmd/kit-all-team/internal/hermes"
 	"github.com/mi1man-cmd/kit-all-team/internal/workspace"
 )
 
@@ -19,6 +20,7 @@ const (
 	codeRetryRequired             operationalCode = "RETRY_REQUIRED"
 	codeUpdateChoiceNotApplicable operationalCode = "UPDATE_CHOICE_NOT_APPLICABLE"
 	codeWorkspaceInspectionFailed operationalCode = "WORKSPACE_INSPECTION_FAILED"
+	codeAIAppInspectionFailed     operationalCode = "AI_APP_INSPECTION_FAILED"
 )
 
 type operationalError struct {
@@ -26,6 +28,16 @@ type operationalError struct {
 	Detail string
 	Cause  error
 }
+
+type publicQueryError struct {
+	Code    operationalCode
+	Message string
+	Cause   error
+}
+
+func (e *publicQueryError) Error() string { return e.Message }
+
+func (e *publicQueryError) Unwrap() error { return e.Cause }
 
 func (e *operationalError) Error() string {
 	if e.Detail == "" {
@@ -47,16 +59,23 @@ func errorIdentity(err error) (string, int) {
 	if errors.Is(err, workspace.ErrChanged) {
 		return "WORKSPACE_CHANGED", ExitFailure
 	}
+	if errors.Is(err, hermes.ErrConfigSchemaUnsupported) {
+		return "HERMES_CONFIG_SCHEMA_UNSUPPORTED", ExitFailure
+	}
 	var operational *operationalError
 	if errors.As(err, &operational) {
 		switch operational.Code {
 		case codeInputRequired, codeUpdateChoiceNotApplicable:
 			return string(operational.Code), ExitUsage
-		case codeWorkspaceExistsUseUpdate, codeForeignWorkspace, codeRetryRequired, codeWorkspaceInspectionFailed:
+		case codeWorkspaceExistsUseUpdate, codeForeignWorkspace, codeRetryRequired, codeWorkspaceInspectionFailed, codeAIAppInspectionFailed:
 			return string(operational.Code), ExitFailure
 		default:
 			return string(operational.Code), ExitFailure
 		}
+	}
+	var public *publicQueryError
+	if errors.As(err, &public) {
+		return string(public.Code), ExitFailure
 	}
 	if code := apps.Code(err); code != "" {
 		return code, ExitApplicationRequired

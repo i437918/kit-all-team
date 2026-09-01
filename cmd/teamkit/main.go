@@ -12,6 +12,7 @@ import (
 	"github.com/mi1man-cmd/kit-all-team/internal/environment"
 	"github.com/mi1man-cmd/kit-all-team/internal/gitx"
 	"github.com/mi1man-cmd/kit-all-team/internal/hermes"
+	"github.com/mi1man-cmd/kit-all-team/internal/platform"
 	"github.com/mi1man-cmd/kit-all-team/internal/registry"
 	"github.com/mi1man-cmd/kit-all-team/internal/service"
 )
@@ -27,20 +28,24 @@ func main() {
 }
 
 func newRunner(in io.Reader, out, errOut io.Writer) cli.Runner {
-	var credentialSource cli.CredentialSource
+	var credentialFactory func() cli.CredentialSource
 	if inputFile, ok := in.(*os.File); ok {
 		sharedInput := bufio.NewReader(inputFile)
 		in = sharedInput
-		credentialSource = credentials.Resolver{Reader: credentials.NewConsoleReaderWithBufferedInput(inputFile, errOut, sharedInput)}
+		reader := credentials.NewConsoleReaderWithBufferedInput(inputFile, errOut, sharedInput)
+		credentialFactory = func() cli.CredentialSource {
+			return credentials.Resolver{Reader: reader, Chooser: reader}
+		}
 	}
 	return cli.Runner{
-		Service:      service.New(service.Options{}),
-		Credentials:  credentialSource,
-		In:           in,
-		Out:          out,
-		Err:          errOut,
-		Environments: environment.NewInspector(),
-		Registry:     registry.NewDefault(),
+		ServiceFactory:      func() cli.Service { return service.New(service.Options{}) },
+		CredentialFactory:   credentialFactory,
+		In:                  in,
+		Out:                 out,
+		Err:                 errOut,
+		Environments:        environment.NewInspector(),
+		Registry:            registry.NewDefault(),
+		ConfigureHermesHome: platform.ConfigureHermesHome,
 		HermesDiscovery: func(ctx context.Context, request hermes.DiscoveryRequest) (hermes.DiscoveryResult, error) {
 			return hermes.Discover(ctx, request, hermes.DiscoveryDependencies{})
 		},

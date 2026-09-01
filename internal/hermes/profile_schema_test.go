@@ -17,13 +17,13 @@ func TestRenderForSchema_UsesProvenSchemaWithoutChangingManagedState(t *testing.
 		V8StdEndpoint: "https://ai.v8std.ru/mcp",
 	}
 	provider := PublicProviderProvider()
-	configs := make(map[int]map[string]any, 2)
+	configs := make(map[int]map[string]any, 3)
 	officeCLICommand := filepath.Join(t.TempDir(), officeCLIManagedNameForTest())
 	profileWithOfficeCLI, err := profile.WithOfficeCLI(officeCLICommand)
 	if err != nil {
 		t.Fatalf("WithOfficeCLI() error = %v", err)
 	}
-	for _, schema := range []int{34, 37} {
+	for _, schema := range []int{34, 37, 38} {
 		data, err := profile.RenderForSchema(provider, schema)
 		if err != nil {
 			t.Fatalf("RenderForSchema(schema=%d) error = %v", schema, err)
@@ -60,15 +60,18 @@ func TestRenderForSchema_UsesProvenSchemaWithoutChangingManagedState(t *testing.
 	if !reflect.DeepEqual(configs[34], configs[37]) {
 		t.Fatalf("managed state differs by more than schema:\n34=%#v\n37=%#v", configs[34], configs[37])
 	}
+	if !reflect.DeepEqual(configs[34], configs[38]) {
+		t.Fatalf("managed state differs by more than schema:\n34=%#v\n38=%#v", configs[34], configs[38])
+	}
 }
 
-func TestRenderForSchema_RejectsUnprovenSchema(t *testing.T) {
+func TestRenderForSchema_RejectsNonPositiveSchema(t *testing.T) {
 	profile := Profile{
 		Project: "apa", Role: "developer", KitHome: `C:\TeamKit`,
 		Toolchain:     Toolchain{Name: "cc_1c_skills", Origin: "https://example.test/skills.git", Version: "pin"},
 		V8StdEndpoint: "https://ai.v8std.ru/mcp",
 	}
-	for _, schema := range []int{33, 38} {
+	for _, schema := range []int{0, -1} {
 		data, err := profile.RenderForSchema(PublicProviderProvider(), schema)
 		if !errors.Is(err, ErrConfigSchemaUnsupported) || data != nil {
 			t.Fatalf("RenderForSchema(schema=%d) = %q, %v; want nil ErrConfigSchemaUnsupported", schema, data, err)

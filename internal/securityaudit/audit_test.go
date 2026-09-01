@@ -524,6 +524,52 @@ func TestAuditArtifacts_RecordsEmbeddedIdentityForAllCandidates(t *testing.T) {
 	}
 }
 
+func TestAuditArtifacts_RecordsV017ReleaseCandidateIdentities(t *testing.T) {
+	root := testutil.TempDir(t)
+	commit := strings.Repeat("b", 40)
+	expectedFilenames := []string{
+		"teamkit-v0.1.7-windows-amd64.exe",
+		"teamkit-v0.1.7-linux-amd64",
+		"teamkit-v0.1.7-darwin-amd64",
+		"teamkit-v0.1.7-darwin-arm64",
+	}
+	fixture := buildIdentityFixture(t, root, "v0.1.7", commit)
+	for _, filename := range expectedFilenames {
+		if err := os.WriteFile(filepath.Join(root, filename), mustReadFile(t, fixture), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	report, err := Audit(context.Background(), Options{Paths: []string{root}, Commit: commit})
+	if err != nil {
+		t.Fatalf("Audit: %v", err)
+	}
+	if !report.Passed {
+		t.Fatalf("audit rejected v0.1.7 candidates: %#v", report.Findings)
+	}
+	if len(report.Findings) != 0 {
+		t.Fatalf("Findings = %#v, want none", report.Findings)
+	}
+	if len(report.Binaries) != 4 {
+		t.Fatalf("Binaries = %#v, want four identities", report.Binaries)
+	}
+
+	identitiesByFilename := make(map[string]BinaryIdentity, len(report.Binaries))
+	for _, identity := range report.Binaries {
+		identitiesByFilename[identity.Filename] = identity
+	}
+	for _, filename := range expectedFilenames {
+		identity, ok := identitiesByFilename[filename]
+		if !ok {
+			t.Errorf("missing identity for %q", filename)
+			continue
+		}
+		if identity.Version != "v0.1.7" || identity.Commit != commit || identity.SHA256 == "" {
+			t.Errorf("identity for %q = %#v", filename, identity)
+		}
+	}
+}
+
 func TestAuditArtifacts_AcceptsOnlyOneCompleteSupportedCandidateSet(t *testing.T) {
 	commit := strings.Repeat("a", 40)
 	tests := []struct {

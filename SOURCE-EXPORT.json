@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
-  "version": "v0.1.6",
-  "source_revision": "1cc48fc49adcc2ce03ad723bd4fe0890a0fbf705",
-  "source_commit_time": "2026-08-25T04:01:09+03:00",
+  "version": "v0.1.8",
+  "source_revision": "8494704bbb40296ba1657591ac862c81a88766ea",
+  "source_commit_time": "2026-09-01T03:58:41+03:00",
   "files": [
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "5c033d54d16f7ee9102bfd4c5b70a84a45c00ba95845660ee189106aa78a9241"
+      "sha256": "d7a9ec3d15e7379d77d81d1a8486298c747cb33d546c53acc536c448f5f76246"
     },
     {
       "path": "cmd/teamkit-security-audit/main_test.go",
@@ -18,11 +18,11 @@
     },
     {
       "path": "cmd/teamkit/main_test.go",
-      "sha256": "99b4158923966a551ed97b55298eb8a3f1119b5b2f73b0b4f4194bb8972ca863"
+      "sha256": "ec3fcbad19f6556318bc9f041ce985bd2094cab33abcabe1d81ee8065a5cf7cd"
     },
     {
       "path": "cmd/teamkit/main.go",
-      "sha256": "dc36ef2c478e689462d71636cbad232747961de2d479cd98125e8ecc40fbc1ea"
+      "sha256": "4f4cf2120e1efbba5d0854800f81fad87066bd21e3b65e95e244c092446d1fe0"
     },
     {
       "path": "docker/alt-p11-officecli/Dockerfile",
@@ -38,7 +38,7 @@
     },
     {
       "path": "internal/apps/apps_test.go",
-      "sha256": "6e7f758c8d5e3703b0896ac7bc0f310a7887376f5ec77ea1249362c6a1c3f855"
+      "sha256": "8e3778eeb3f3f88a0499217ebcf99d45dfcb2607e4c335036d5b6ba3456e61cb"
     },
     {
       "path": "internal/apps/apps.go",
@@ -46,11 +46,11 @@
     },
     {
       "path": "internal/apps/handoff.go",
-      "sha256": "4859192d5702183b1d755f3e042df6757db24232eae6bae996283bdf539fe039"
+      "sha256": "fbfc01507af28df278de19254b354289a169b03b7e4c8a0d5f6f4b2b600e27d3"
     },
     {
       "path": "internal/bootstrap/effects_test.go",
-      "sha256": "ea247fbe8edfe73e0c7035a92d61cbd19d76a1e3c84fca7756e3e0a7afbc1f3d"
+      "sha256": "917b00a8d5092398ddeb40d2ffaaa288fc1b0cff5d8e79002926d67506dfa33e"
     },
     {
       "path": "internal/bootstrap/effects_windows_test.go",
@@ -58,11 +58,11 @@
     },
     {
       "path": "internal/bootstrap/effects.go",
-      "sha256": "76af93d625408f0242e26871d965b65be52ae076ea42f54bcfa941c8dd1d912c"
+      "sha256": "ba73fc3fa11c2e6a38328bd7d02c8794fa63dd939d19908f7fcef5b762953d93"
     },
     {
       "path": "internal/bootstrap/install_readiness_test.go",
-      "sha256": "d33c7102131a22f3ed91af78cedbe3d49b6ac835b52d48e17ef20f0cd9e86b18"
+      "sha256": "3c111d77915cedd82a9121436fb9de70bfbd615d0d1c725d2e04625cb0a4812b"
     },
     {
       "path": "internal/bootstrap/profile_safety_other.go",
@@ -98,15 +98,31 @@
     },
     {
       "path": "internal/cli/environment_flow.go",
-      "sha256": "3020516c295236db187ad754812547adf23caecebf528c994a30773d1208b89f"
+      "sha256": "eb98e4f7b5725d94951b958bc67243d5d8e25866ae23319c0bedd8ad2370f464"
     },
     {
       "path": "internal/cli/errors.go",
-      "sha256": "8f2cbaf7a395e0b5b9b06e0e2959a32b947a0ece4d335976ac7fa24fd4bd588b"
+      "sha256": "102af5a3dce8fae32e170ed3d5960b9aa37e728f456e2724c3778b9aedac8ccc"
+    },
+    {
+      "path": "internal/cli/flags_test.go",
+      "sha256": "90acc2e156111695f3010cc8782058740986b3582e0c1b859706849bbba7b9a6"
     },
     {
       "path": "internal/cli/flags.go",
-      "sha256": "63608db77aaddaaa04ec83f1520f93f314f773763c265d47c1aaf773380eeb23"
+      "sha256": "0b878cc43aeff94bf33c067513f2b6024722758a83a05bccf930d628a14c6d2d"
+    },
+    {
+      "path": "internal/cli/hermes_onboarding_test.go",
+      "sha256": "0f89fab6222b2747d89735c7452e56066ba1856e91d2558a8f55c7596afea2a4"
+    },
+    {
+      "path": "internal/cli/progress_test.go",
+      "sha256": "2f045c6176cd65cb23421af2d8c5932fa2caaff6aa2f2b6bbbcbb12d1cc14e59"
+    },
+    {
+      "path": "internal/cli/progress.go",
+      "sha256": "d6ffc5433206647677a74fe7a1fa627f89dee29a2e1eb5a5e2e499422f9f9e7a"
     },
     {
       "path": "internal/cli/prompt_test.go",
@@ -114,15 +130,31 @@
     },
     {
       "path": "internal/cli/prompt.go",
-      "sha256": "00344380054cbcd5bd2c2d0b16332d8db09fb86675941c71736a94b0768a4b5d"
+      "sha256": "461a1d2738a333b2ebdbc0148f1b2b4cb50788681c43a7f87535b781641627e3"
+    },
+    {
+      "path": "internal/cli/public_query_test.go",
+      "sha256": "e8eb34a4a5a5b1d4fd1357253826b003a54acbd4efe1eed94ec0b358150c9ea4"
+    },
+    {
+      "path": "internal/cli/public_query.go",
+      "sha256": "52f21bff4c7a8a89b054a402dd48d6f694f35a1692f92cd83980ae4842e99963"
     },
     {
       "path": "internal/cli/run_test.go",
-      "sha256": "ccec9a2c9542eec9fd93f8491a6bbe9e768dd0f3d04f9b31ef1dfd7dd5012788"
+      "sha256": "351cc9bce0bb0fe26fb2e020067d6682775afbee7df2f926660a28d53c905b0b"
     },
     {
       "path": "internal/cli/run.go",
-      "sha256": "d08ea630d5334986b4083971854de5182e70b241734bfabb7b37c6791b1ad625"
+      "sha256": "53d68e1205951418b952f02da7912dffa941d1f4bb03c83d0bc24c284a095be2"
+    },
+    {
+      "path": "internal/cli/user_check_test.go",
+      "sha256": "540dda6225a8b0c91cfe2851887e8f931bfa457acd6241f933ca11123eedcdc2"
+    },
+    {
+      "path": "internal/cli/user_check.go",
+      "sha256": "dd8cc5715adc8100909487cf6ba8d033d69b80707d67e46eaa14d88baa321df2"
     },
     {
       "path": "internal/config/config_test.go",
@@ -138,15 +170,15 @@
     },
     {
       "path": "internal/credentials/console_test.go",
-      "sha256": "0912aa41249f3f64ef740a177fc9a8ae62cb9e47505a0bc94e104dee33194db3"
+      "sha256": "f754bbc9770cd6aa1edefa3b57b5e405ba29e4483efa0501a9bff2f19cbca496"
     },
     {
       "path": "internal/credentials/console.go",
-      "sha256": "963b9359db5a95db44965d7324eb95864dd7c4a3cfa91364c621529b4d96b138"
+      "sha256": "8fbfdb2ad064604317fb12c76f3fc90515e8b2c092a1298213201a9c8452dd8d"
     },
     {
       "path": "internal/credentials/resolver_test.go",
-      "sha256": "f848c63aedc16e11ecbd61c16143e27c5d433db4a6cc081ee93ccd0ff08f0d46"
+      "sha256": "8ead77bf1e4db165220109b207f76942f7d1cf932bddfca268734b629c647409"
     },
     {
       "path": "internal/credentials/resolver_windows_test.go",
@@ -154,7 +186,7 @@
     },
     {
       "path": "internal/credentials/resolver.go",
-      "sha256": "cf7edec3b3e0dfcbee45d5ad6abdb9e0217c8e91221c4c42b76c160da9ec2974"
+      "sha256": "e8d609a682813729e7f0b968ebebf9fb57e21079ee84a2a412666d6ce8127757"
     },
     {
       "path": "internal/domain/errors.go",
@@ -174,11 +206,11 @@
     },
     {
       "path": "internal/engine/engine_test.go",
-      "sha256": "25e629a1ee9184cf7c0d4f444736e61470b5cc68f934656944d363f7ee2793f2"
+      "sha256": "e87fbedfe52f1e071df405e7294ce2b037e8f43fa80380ce33245bfc114d3ffe"
     },
     {
       "path": "internal/engine/engine.go",
-      "sha256": "bf5556793b5b65e5bc96cb034f6a6e5026311961af195f35cc45adf20adfc993"
+      "sha256": "23c45a1f1ebbe316b6be1f96e6a283c1a51571107f135e9d0d90c36d471b1979"
     },
     {
       "path": "internal/environment/discovery_test.go",
@@ -310,11 +342,11 @@
     },
     {
       "path": "internal/hermes/discovery_test.go",
-      "sha256": "0ac74ac6b4d84188395391a621605939d521c88d400cac104fb9bb1227c3f7cd"
+      "sha256": "5924e39ccd8158a7b30a91469e34fd71d6067279ecc7d64e4ec97448a706bf73"
     },
     {
       "path": "internal/hermes/discovery.go",
-      "sha256": "0a55d4e695b70e562b72b7139793e376dd7f839e9914f15bd3d768d1b070baeb"
+      "sha256": "766f90c83e8cfcecd4be45ca1f039613eda8800d8d07591adcbfa23e9214d201"
     },
     {
       "path": "internal/hermes/doctor_test.go",
@@ -338,11 +370,11 @@
     },
     {
       "path": "internal/hermes/install_readiness_test.go",
-      "sha256": "d5278638ec0c0bd2211f68abecd734c3212e502542de71dc91649ea506b37e7a"
+      "sha256": "e48fb1e92861ee01af82fe6f68ffef5e1d397ac3a01f8f5c46cd549c14270ac5"
     },
     {
       "path": "internal/hermes/install_readiness.go",
-      "sha256": "50575a0ec1fef9448a6c3445f22b859d607f68b63a4c246c7eb5e7644aa0c4ed"
+      "sha256": "7f2f9df5ab6647dbc225cb66e40e633fa57232e8b9e47d631a685f9c97092a1f"
     },
     {
       "path": "internal/hermes/install_root_other_test.go",
@@ -366,11 +398,11 @@
     },
     {
       "path": "internal/hermes/managed_state_test.go",
-      "sha256": "bf1f36ef7c8c1393de3c8d202479abaea2ff4b5ddb2946b69fe9e907e72959d4"
+      "sha256": "30b28145bc153566a73e211b74326dc06cb76613bd74622f48a3dd9e619553db"
     },
     {
       "path": "internal/hermes/managed_state.go",
-      "sha256": "c5515ec165b869f488053dfe3bf9582078ed82591e2c9195ac01206168e0a22c"
+      "sha256": "6a2005872a1b748271f23c480c3ec31ccca2a3c049e95c6facfa6f1d2c4cb94f"
     },
     {
       "path": "internal/hermes/profile_cli.go",
@@ -394,11 +426,11 @@
     },
     {
       "path": "internal/hermes/profile_schema_test.go",
-      "sha256": "d46e2fe88bf646cac1b71813e3decf9702c11c3632fd7c93abc02caa8285568c"
+      "sha256": "4799389d0f47e1212c47221ce52673b21d305695037648f1a12895df5ee8104f"
     },
     {
       "path": "internal/hermes/profile.go",
-      "sha256": "75e1352a323d20d510e4141f4b33d69bdc836bc7d137d5462c6cb9e30d45989a"
+      "sha256": "151c6f3095e70a1bfeec5833a5f2a94bdb9abdc121ce31f04d16ba4548f0f5ed"
     },
     {
       "path": "internal/hermes/provider.go",
@@ -406,11 +438,11 @@
     },
     {
       "path": "internal/hermes/runtime_contract_test.go",
-      "sha256": "c657b7e04035663ab3f2d3bc5f738c099d60d1fc6d7612faf71ce1884035c1e0"
+      "sha256": "94e906cc2406f1c5fbeae6a0bf0888c40f6917b6fc7dadf01dcca2cf797c79e6"
     },
     {
       "path": "internal/hermes/runtime_contract.go",
-      "sha256": "7ef9cf25bd69033ee36c979f05416bb0e3d6544daec5a52e77b893f0660c7763"
+      "sha256": "df9a06575a9d89cad871000a41e3edbe68ad6e4440d1912dbf16643608026221"
     },
     {
       "path": "internal/hermes/soul_test.go",
@@ -637,6 +669,10 @@
       "sha256": "1d3f85d532771838ce81ede54d6c353912e9f3814d98cc3063f82bca13d00867"
     },
     {
+      "path": "internal/reconcile/progress.go",
+      "sha256": "8767c52c67adba7a739f82e0ab0b0bd688a9beb242b999af9aa5fe372d353bc0"
+    },
+    {
       "path": "internal/reconcile/receipt_test.go",
       "sha256": "daa1c7f259c64c349d8771481c4ee422d05f8920110ac0f8cce32084afe9d6ac"
     },
@@ -698,11 +734,11 @@
     },
     {
       "path": "internal/securityaudit/audit_test.go",
-      "sha256": "1e7dab254e5e41c437a6ab2877bc3a9e23fae720c0ddb82512b74a03dd472559"
+      "sha256": "56d497e9a35e48b99db8656d51d342b4421490c4bb23a5af79c8e762f3fda9f0"
     },
     {
       "path": "internal/securityaudit/audit.go",
-      "sha256": "b7fcf454818427cf3a03e4c95f63d8b1fe06911075117a22349fe523a6fc61f0"
+      "sha256": "608782e8f0d00a3df7cec4cd534b0ebed718308238ecab544b8078a9b5dc4c5d"
     },
     {
       "path": "internal/securityaudit/git_portability_test.go",
@@ -762,15 +798,19 @@
     },
     {
       "path": "internal/service/operation_contract_test.go",
-      "sha256": "23d02f93561d154973fb76a092d18745b41fbc0fc9681ef7a39c7f7f5856622b"
+      "sha256": "40f4f638eaf6e75b3aebe1c2d157b3dd94283f91c8c1b086811a479e76ab63d5"
     },
     {
       "path": "internal/service/operation_contract.go",
-      "sha256": "b67b7c93ab73d73a4e47b2ce1f30c4ec735692f7dacb927c903be94cbfc11e40"
+      "sha256": "e948bd8dd774a043fc41d0e9fba8a335b6e6910d6eea48b7a8d26a071464b961"
+    },
+    {
+      "path": "internal/service/progress_boundary_test.go",
+      "sha256": "3ce60143308eb307e2523cbb4368d2da1cb2c3b3dbee551b52c3ba367d1059d1"
     },
     {
       "path": "internal/service/service_test.go",
-      "sha256": "f688de301d8fadab8745b1e9f2220869cf7c284a5b7aa6d7bb88fe635de75e3b"
+      "sha256": "fae51d6b63d989589f706d0e6108791d0e27fc2868b8a0c5b0c9fcdb445742fe"
     },
     {
       "path": "internal/service/service_windows_test.go",
@@ -778,7 +818,7 @@
     },
     {
       "path": "internal/service/service.go",
-      "sha256": "d063d50edf59f8b80326275bf1bd81d4a078ed2a778cbfca873b4cb2b76c9a62"
+      "sha256": "821e010bd192f513f9e3d91f73e9d75461f4af2d4163baa1dc365d7589f84c7d"
     },
     {
       "path": "internal/state/store_test.go",
@@ -845,12 +885,16 @@
       "sha256": "8e1f792a003a8f68a7e52079a6ec71c5d8971fd7549a1fc4ef47f51e9a9d0787"
     },
     {
+      "path": "scripts/build-windows-installer.ps1",
+      "sha256": "d0b70c2b5da83797ebbb09c2fc909576112ca5ce1441fab6ed2954b4fdd91f17"
+    },
+    {
       "path": "scripts/build.ps1",
-      "sha256": "a6e3231c621c4de334e31c1227a207e2b81d56159196e733aa5dd812bf5f02a3"
+      "sha256": "59df1f1e4ded23939dbd1ff8c95e5dd076322f5a841759673cbf592b98248b56"
     },
     {
       "path": "scripts/build.sh",
-      "sha256": "79b735f8937d5fb1403fa8ab57836d5790898b10c744a97042ab4b5bcac2f298"
+      "sha256": "42b6e52f9c3ee20a070bd5e9a0e8d0e79d7f9e40700575b46bca23a2fe5b9acf"
     },
     {
       "path": "scripts/ensure-go.sh",
@@ -862,7 +906,15 @@
     },
     {
       "path": "scripts/stage-v0.1.6.ps1",
-      "sha256": "dad166aca04760565eef0db8f9ef916098317fc075d7dfb28c6ad30a3e1bb931"
+      "sha256": "bf9c4127878a7d26746768053200ea067ee80b948bf3e87ac6a57c686dc05510"
+    },
+    {
+      "path": "scripts/stage-v0.1.7.ps1",
+      "sha256": "d472096642ba1310e6b05138cd14423808bd9fa83fbbfd4a43be8526897f6bc9"
+    },
+    {
+      "path": "scripts/verify-windows-installer.ps1",
+      "sha256": "3919edb19912a30fce2e49e6820015b13656459002f462baf3d4f1745ef8b485"
     },
     {
       "path": "scripts/verify.ps1",

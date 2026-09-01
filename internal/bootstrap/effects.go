@@ -14,6 +14,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/mi1man-cmd/kit-all-team/internal/apps"
@@ -545,12 +546,8 @@ func (e *Effects) ensureHermesCompatibility(ctx context.Context, desired domain.
 	if err != nil {
 		return err
 	}
-	lock, err := hermes.VerifiedToolchainLock(root, pin)
-	if err != nil {
+	if _, err := hermes.VerifiedToolchainLock(root, pin); err != nil {
 		return fmt.Errorf("%w: selected toolchain lock", hermes.ErrBundledSkillsMigrationFailed)
-	}
-	if err := hermes.CheckBundledSkillCollisions(e.RuntimeContract.BundledSkills, lock.InstalledSkills); err != nil {
-		return err
 	}
 	if err := privatefile.NormalizeOwnerOnly(filepath.Join(root, ".env")); err != nil {
 		return err
@@ -565,26 +562,11 @@ func (e *Effects) ensureHermesCompatibility(ctx context.Context, desired domain.
 	return nil
 }
 
-func (e *Effects) ensureRuntimeContract(ctx context.Context, desired domain.DesiredState) error {
-	if e.RuntimeContract.Info.Executable != "" && (e.RuntimeContract.ConfigSchema == 34 || e.RuntimeContract.ConfigSchema == 37) {
+func (e *Effects) ensureRuntimeContract(_ context.Context, _ domain.DesiredState) error {
+	if e.RuntimeContract.Info.Executable != "" && e.RuntimeContract.ConfigSchema > 0 {
 		return nil
 	}
-	if e.RuntimeProbe == nil {
-		return hermes.ErrConfigSchemaUnsupported
-	}
-	executable := e.HermesExecutable
-	if !desired.AppInstalled() && desired.OS() != domain.OSWindows {
-		executable = filepath.Join(desired.HermesHome(), ".teamkit", "hermes-agent-source", "venv", "bin", "hermes")
-	}
-	contract, err := e.RuntimeProbe(ctx, executable)
-	if err != nil {
-		return err
-	}
-	if contract.Info.Executable != filepath.Clean(executable) || contract.ConfigSchema != 34 && contract.ConfigSchema != 37 {
-		return hermes.ErrConfigSchemaUnsupported
-	}
-	e.RuntimeContract = contract
-	return nil
+	return hermes.ErrConfigSchemaUnsupported
 }
 
 func (e *Effects) verifyHermesManagedState(ctx context.Context, desired domain.DesiredState) error {
@@ -663,6 +645,13 @@ func (e *Effects) ensureHermes(ctx context.Context, desired domain.DesiredState)
 				return err
 			}
 		}
+		executable := standardHermesExecutable(desired)
+		contract, err := hermes.VerifyRuntimeContract(ctx, executable, nil)
+		if err != nil {
+			return err
+		}
+		e.HermesExecutable = executable
+		e.RuntimeContract = contract
 	}
 	owned, err := profileOwnerMatches(desired)
 	if err != nil {
@@ -742,6 +731,13 @@ func (e *Effects) ensureHermes(ctx context.Context, desired domain.DesiredState)
 		return err
 	}
 	return completeProfileAdoption(desired, profileDir)
+}
+
+func standardHermesExecutable(desired domain.DesiredState) string {
+	if runtime.GOOS == "windows" {
+		return filepath.Join(desired.HermesHome(), "hermes-agent", "venv", "Scripts", "hermes.exe")
+	}
+	return filepath.Join(desired.HermesHome(), "hermes-agent", "venv", "bin", "hermes")
 }
 
 func normalizeStagingProfileEnvironment(staging string, claim profileClaim) error {

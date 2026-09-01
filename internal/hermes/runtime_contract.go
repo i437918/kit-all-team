@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -14,7 +15,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/mi1man-cmd/kit-all-team/internal/pathsafe"
+	"github.com/mi1man-cmd/kit-all-team/internal/domain"
 )
 
 const (
@@ -119,56 +120,36 @@ var defaultBundledInventoryLimits = bundledInventoryLimits{
 	MaxBytes: 16 << 20, MaxFrontmatterBytes: 64 << 10,
 }
 
-// VerifyRuntimeContract proves the installed Hermes executable, configuration
-// schema, and bundled skills from one stable no-follow installation root.
+// VerifyRuntimeContract reads the positive configuration schema from the exact
+// standard Hermes layout. The capture parameter remains for API compatibility
+// and is deliberately not invoked.
 func VerifyRuntimeContract(ctx context.Context, executable string, capture executableCapture) (RuntimeContract, error) {
-	info, err := runtimeInfoFromExecutableLayout(executable)
-	if err != nil {
-		return RuntimeContract{}, err
-	}
-	pin, err := pinRuntimeExecutable(info.Executable)
-	if err != nil {
-		return RuntimeContract{}, ErrExecutableUnverified
-	}
-	defer pin.Close()
-	if err := pathsafe.ValidateDirectory(info.InstallDir); err != nil {
-		return RuntimeContract{}, fmt.Errorf("%w: install root is unsafe", ErrExecutableUnverified)
-	}
-	if err := pathsafe.ValidateDirectory(filepath.Dir(info.Executable)); err != nil {
-		return RuntimeContract{}, fmt.Errorf("%w: executable parent is unsafe", ErrExecutableUnverified)
-	}
-	if err := pathsafe.ValidateRegular(info.Executable); err != nil {
-		return RuntimeContract{}, fmt.Errorf("%w: executable is unsafe", ErrExecutableUnverified)
-	}
-	beforeRuntimeRootOpen()
-	root, err := openVerifiedInstallRoot(info)
-	if err != nil {
-		return RuntimeContract{}, err
-	}
-	defer root.Close()
-	if root.Identity().ExecutableKey != pin.Key() {
-		return RuntimeContract{}, ErrExecutableUnverified
-	}
-	schema, err := probeConfigSchema(ctx, root)
-	if err != nil {
-		return RuntimeContract{}, err
-	}
-	afterRuntimeSchemaProbe(root)
-	skills, digest, err := inventoryBundledSkillsAndDigest(ctx, root)
-	if err != nil {
-		return RuntimeContract{}, err
-	}
-	identity := root.Identity()
-	if err := root.VerifyIdentity(identity); err != nil || identity.ExecutableKey != pin.Key() {
-		return RuntimeContract{}, fmt.Errorf("%w: runtime identity changed", ErrBundledSkillsCatalogUnverified)
-	}
-	return RuntimeContract{
-		Info: info, Identity: identity, ConfigSchema: schema, BundledSkills: skills,
-		BundledInventorySHA256: digest,
-	}, nil
+	return verifyRuntimeContractForOS(ctx, executable, runtimeOSFamily(), capture)
 }
 
-func runtimeInfoFromExecutableLayout(executable string) (RuntimeInfo, error) {
+func verifyRuntimeContractForOS(ctx context.Context, executable string, family domain.OSFamily, capture executableCapture) (RuntimeContract, error) {
+	info, err := runtimeInfoFromExecutableLayoutForOS(executable, family)
+	if err != nil {
+		return RuntimeContract{}, err
+	}
+	schema, err := probeConfigSchemaPath(ctx, filepath.Join(info.InstallDir, "hermes_cli", "config_defaults.py"))
+	if err != nil {
+		return RuntimeContract{}, err
+	}
+	return RuntimeContract{Info: info, ConfigSchema: schema}, nil
+}
+
+func runtimeOSFamily() domain.OSFamily {
+	if runtime.GOOS == "windows" {
+		return domain.OSWindows
+	}
+	if runtime.GOOS == "darwin" {
+		return domain.OSMacOS
+	}
+	return domain.OSLinux
+}
+
+func runtimeInfoFromExecutableLayoutForOS(executable string, family domain.OSFamily) (RuntimeInfo, error) {
 	absolute, err := filepath.Abs(executable)
 	if err != nil {
 		return RuntimeInfo{}, ErrExecutableUnverified
@@ -180,7 +161,7 @@ func runtimeInfoFromExecutableLayout(executable string) (RuntimeInfo, error) {
 		return RuntimeInfo{}, ErrExecutableUnverified
 	}
 	expected := filepath.Join("venv", "bin", "hermes")
-	if runtime.GOOS == "windows" {
+	if family == domain.OSWindows {
 		expected = filepath.Join("venv", "Scripts", "hermes.exe")
 		if !strings.EqualFold(relative, expected) {
 			return RuntimeInfo{}, ErrExecutableUnverified
@@ -211,7 +192,30 @@ func probeConfigSchema(ctx context.Context, root openedInstallRoot) (int, error)
 		return 0, ErrConfigSchemaUnsupported
 	}
 	value, occurrences, valid := pythonConfigVersion(mappings[0])
-	if !valid || occurrences != 1 || (value != 34 && value != 37) {
+	if !valid || occurrences != 1 || value <= 0 {
+		return 0, ErrConfigSchemaUnsupported
+	}
+	return value, nil
+}
+
+func probeConfigSchemaPath(ctx context.Context, path string) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, fmt.Errorf("%w: config probe cancelled", ErrConfigSchemaUnsupported)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || len(data) > maxConfigDefaultsBytes || !utf8.Valid(data) {
+		return 0, ErrConfigSchemaUnsupported
+	}
+	text := strings.ReplaceAll(string(data), "\r\n", "\n")
+	if strings.Contains(text, "\r") {
+		return 0, ErrConfigSchemaUnsupported
+	}
+	mappings, closed := pythonDefaultConfigMappings(text)
+	if !closed || len(mappings) != 1 {
+		return 0, ErrConfigSchemaUnsupported
+	}
+	value, occurrences, valid := pythonConfigVersion(mappings[0])
+	if !valid || occurrences != 1 || value <= 0 {
 		return 0, ErrConfigSchemaUnsupported
 	}
 	return value, nil

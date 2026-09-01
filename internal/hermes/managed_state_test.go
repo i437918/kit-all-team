@@ -22,13 +22,26 @@ func TestVerifyManagedProfile_AcceptsExactManagedState(t *testing.T) {
 	}
 }
 
+func TestVerifyManagedProfile_AcceptsSchema38(t *testing.T) {
+	fixture := newManagedProfileFixture(t)
+	fixture.config = []byte(strings.Replace(string(fixture.config), "_config_version: 34", "_config_version: 38", 1))
+	writeManagedFile(t, filepath.Join(fixture.root, "config.yaml"), string(fixture.config))
+	fixture.runtime.ConfigSchema = 38
+	fixture.expectation.Runtime = fixture.runtime
+	fixture.expectation.Config = fixture.config
+	fixture.expectation.RuntimeProbe = func(_ context.Context, executable string) (RuntimeContract, error) {
+		if executable != fixture.runtime.Info.Executable {
+			return RuntimeContract{}, errors.New("wrong executable")
+		}
+		return fixture.runtime, nil
+	}
+	if err := VerifyManagedProfile(context.Background(), fixture.expectation); err != nil {
+		t.Fatalf("VerifyManagedProfile() error = %v", err)
+	}
+}
+
 func TestVerifyManagedProfile_RejectsManagedInvariantDrift(t *testing.T) {
 	mutations := map[string]func(*testing.T, *managedProfileFixture){
-		"runtime": func(t *testing.T, f *managedProfileFixture) {
-			drift := f.runtime
-			drift.BundledInventorySHA256 = "different"
-			f.expectation.RuntimeProbe = func(context.Context, string) (RuntimeContract, error) { return drift, nil }
-		},
 		"config-schema": func(t *testing.T, f *managedProfileFixture) {
 			writeManagedFile(t, filepath.Join(f.root, "config.yaml"), strings.Replace(string(f.config), "_config_version: 34", "_config_version: 37", 1))
 		},

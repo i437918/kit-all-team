@@ -13,24 +13,31 @@ import (
 )
 
 type options struct {
-	command         string
-	operatingSystem string
-	application     string
-	appInstalled    string
-	kitHome         string
-	hermesHome      string
-	hermesVersion   string
-	project         string
-	role            string
-	toolchain       string
-	update          string
-	kitHomeSet      bool
-	toolchainSet    bool
-	updateSet       bool
-	jsonOutput      bool
-	nonInteractive  bool
-	installerPath   string
-	certificates    string
+	command            string
+	operatingSystem    string
+	application        string
+	appInstalled       string
+	kitHome            string
+	hermesHome         string
+	hermesVersion      string
+	project            string
+	role               string
+	toolchain          string
+	update             string
+	kitHomeSet         bool
+	operatingSystemSet bool
+	applicationSet     bool
+	appInstalledSet    bool
+	appInstalledExact  bool
+	hermesHomeSet      bool
+	projectSet         bool
+	roleSet            bool
+	toolchainSet       bool
+	updateSet          bool
+	jsonOutput         bool
+	nonInteractive     bool
+	installerPath      string
+	certificates       string
 }
 
 func parseOptions(args []string, errors io.Writer) (options, error) {
@@ -43,14 +50,23 @@ func parseOptions(args []string, errors io.Writer) (options, error) {
 		}
 	}
 	if len(args) == 0 {
-		return options{}, fmt.Errorf("command required: plan, apply, status, retry, update, or version")
+		return options{}, fmt.Errorf("command required: catalog, detect-app, environments, plan, apply, status, retry, update, or version")
 	}
-	opts := options{command: strings.ToLower(args[0])}
+	opts := options{
+		command:           strings.ToLower(args[0]),
+		appInstalledExact: hasExactAppInstalledToken(args),
+	}
 	flags := flag.NewFlagSet(opts.command, flag.ContinueOnError)
 	flags.SetOutput(errors)
 	flags.BoolVar(&opts.jsonOutput, "json", false, "emit machine-readable JSON")
 
 	switch opts.command {
+	case "catalog":
+	case "detect-app":
+		flags.StringVar(&opts.application, "app", "", "AI application ID")
+		flags.StringVar(&opts.appInstalled, "app-installed", "", "confirmed installed state for a Windows non-Hermes application")
+	case "environments":
+		flags.StringVar(&opts.application, "app", "", "AI application ID")
 	case "plan", "apply":
 		flags.StringVar(&opts.operatingSystem, "os", "", "windows, macos, linux, or altlinux")
 		flags.StringVar(&opts.application, "app", "", "AI application ID")
@@ -69,7 +85,7 @@ func parseOptions(args []string, errors io.Writer) (options, error) {
 	case "update":
 		flags.StringVar(&opts.kitHome, "kit-home", "", "absolute KIT_ALL_TEAM_HOME")
 		flags.StringVar(&opts.update, "target", "", "content, database, both, or none")
-	case "version", "help":
+	case "version", "help", "user-check":
 	default:
 		return options{}, fmt.Errorf("unknown command %q", opts.command)
 	}
@@ -78,6 +94,18 @@ func parseOptions(args []string, errors io.Writer) (options, error) {
 	}
 	flags.Visit(func(flag *flag.Flag) {
 		switch flag.Name {
+		case "os":
+			opts.operatingSystemSet = true
+		case "app":
+			opts.applicationSet = true
+		case "app-installed":
+			opts.appInstalledSet = true
+		case "hermes-home":
+			opts.hermesHomeSet = true
+		case "project":
+			opts.projectSet = true
+		case "role":
+			opts.roleSet = true
 		case "kit-home":
 			opts.kitHomeSet = true
 		case "toolchain":
@@ -141,4 +169,44 @@ func parseUpdate(value string) (reconcile.UpdateChoice, error) {
 	default:
 		return "", fmt.Errorf("UPDATE_CHOICE_UNKNOWN: %q", value)
 	}
+}
+
+func (o options) isHermesContinuation() bool {
+	return !o.nonInteractive && o.isHermesContinuationShape()
+}
+
+func (o options) isHermesContinuationShape() bool {
+	if o.appInstalled != "true" ||
+		!o.appInstalledExact ||
+		o.command != "apply" ||
+		o.operatingSystem != "windows" || o.application != "hermes" ||
+		!o.operatingSystemSet || !o.applicationSet || !o.appInstalledSet ||
+		!o.kitHomeSet || !o.hermesHomeSet || !o.projectSet || !o.roleSet ||
+		!o.toolchainSet || !o.updateSet || o.update != "none" ||
+		strings.TrimSpace(o.kitHome) == "" || strings.TrimSpace(o.hermesHome) == "" {
+		return false
+	}
+	if _, err := catalog.LookupProject(domain.ProjectID(o.project)); err != nil {
+		return false
+	}
+	if _, err := catalog.LookupRole(domain.Role(o.role)); err != nil {
+		return false
+	}
+	if _, err := catalog.LookupToolchain(domain.Toolchain(o.toolchain)); err != nil {
+		return false
+	}
+	return true
+}
+
+func hasExactAppInstalledToken(args []string) bool {
+	found := false
+	for _, arg := range args[1:] {
+		switch {
+		case arg == "--app-installed=true":
+			found = true
+		case arg == "--app-installed", arg == "-app-installed", strings.HasPrefix(arg, "--app-installed="), strings.HasPrefix(arg, "-app-installed="):
+			return false
+		}
+	}
+	return found
 }

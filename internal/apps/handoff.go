@@ -48,6 +48,9 @@ func PrepareHandoff(application Application, request HandoffRequest) (Handoff, e
 		}
 	}
 	command := installationInstructions(request.Toolchain, request.V8StdEndpoint)
+	if request.Toolchain.Name == string(domain.ToolchainAIRules1C) {
+		command += " Follow AGENT-INSTALL.md from the pinned ai_rules_1c tree at the exact catalog commit."
+	}
 	for _, secret := range request.SecretValues {
 		if secret != "" && strings.Contains(command, secret) {
 			return Handoff{}, fmt.Errorf("handoff would reveal a secret")

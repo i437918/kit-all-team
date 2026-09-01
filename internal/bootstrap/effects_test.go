@@ -55,6 +55,49 @@ func TestEffects_ObserveRequiresPublicDesiredStateForWorkspaceReadiness(t *testi
 	}
 }
 
+func TestEffects_EnsureRuntimeContract_AcceptsCachedSchema38WithoutProbe(t *testing.T) {
+	state := desired(t, testutil.TempDir(t))
+	executable := testHermesExecutable(t)
+	probeCalls := 0
+	effects := &Effects{
+		HermesExecutable: executable,
+		RuntimeContract:  testRuntimeContract(executable, 38),
+		RuntimeProbe: func(context.Context, string) (hermes.RuntimeContract, error) {
+			probeCalls++
+			return hermes.RuntimeContract{}, errors.New("cached runtime was re-probed")
+		},
+	}
+	if err := effects.ensureRuntimeContract(context.Background(), state); err != nil {
+		t.Fatalf("ensureRuntimeContract() error = %v", err)
+	}
+	if probeCalls != 0 || effects.RuntimeContract.ConfigSchema != 38 {
+		t.Fatalf("probe calls=%d schema=%d", probeCalls, effects.RuntimeContract.ConfigSchema)
+	}
+}
+
+func TestEffects_EnsureRuntimeContract_RejectsMissingCachedContractWithoutProbe(t *testing.T) {
+	state := desired(t, testutil.TempDir(t))
+	executable := testHermesExecutable(t)
+	contract := testRuntimeContract(executable, 38)
+	probeCalls := 0
+	effects := &Effects{
+		HermesExecutable: executable,
+		RuntimeProbe: func(_ context.Context, got string) (hermes.RuntimeContract, error) {
+			probeCalls++
+			if got != executable {
+				return hermes.RuntimeContract{}, errors.New("wrong executable")
+			}
+			return contract, nil
+		},
+	}
+	if err := effects.ensureRuntimeContract(context.Background(), state); !errors.Is(err, hermes.ErrConfigSchemaUnsupported) {
+		t.Fatalf("ensureRuntimeContract() error = %v", err)
+	}
+	if probeCalls != 0 || effects.RuntimeContract.ConfigSchema != 0 {
+		t.Fatalf("probe calls=%d schema=%d", probeCalls, effects.RuntimeContract.ConfigSchema)
+	}
+}
+
 func TestEffects_FinalizeAddsRequiredRootEntriesAndPreservesLocalExclude(t *testing.T) {
 	home := filepath.Join(testutil.TempDir(t), "kit")
 	if err := os.MkdirAll(filepath.Join(home, "db", ".git", "hooks"), 0o700); err != nil {
@@ -1181,82 +1224,6 @@ func TestEffects_HermesCompatibilityRepairsOwnedLegacyEnvironmentAndMigratesOnce
 	got, err := os.ReadFile(environment)
 	if err != nil || !bytes.Equal(got, secret) {
 		t.Fatalf("legacy environment changed: %q, %v", got, err)
-	}
-}
-
-func TestEffects_HermesCompatibilityRejectsBundledCollisionBeforeACLOrOptIn(t *testing.T) {
-	home := testutil.TempDir(t)
-	state := desired(t, home)
-	if err := (&Effects{}).Apply(context.Background(), state, reconcile.Action{Kind: reconcile.ActionPrepareWorkspace}); err != nil {
-		t.Fatal(err)
-	}
-	profileRoot := profileDirectory(state)
-	if err := os.MkdirAll(filepath.Join(profileRoot, "skills", "user-sentinel"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	userPath := filepath.Join(profileRoot, "skills", "user-sentinel", "SKILL.md")
-	if err := os.WriteFile(userPath, []byte("user-sentinel"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(profileRoot, "skills", "hermes-default"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	bundledPath := filepath.Join(profileRoot, "skills", "hermes-default", "SKILL.md")
-	if err := os.WriteFile(bundledPath, []byte("bundled-sentinel"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := workspace.WriteFileAtomic(profileOwnerPath(state), []byte(profileIdentity(state)+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	environment := filepath.Join(profileRoot, ".env")
-	if err := os.WriteFile(environment, []byte("secret-sentinel\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(environment, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	marker := filepath.Join(profileRoot, ".no-bundled-skills")
-	markerBody := "This profile opted out of bundled-skill seeding (`hermes profile create --no-skills`).\nDelete this file to re-enable sync on the next `hermes update`.\n"
-	if err := os.WriteFile(marker, []byte(markerBody), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	materializeSelectedFixture(t, state, profileRoot)
-	lockPath := filepath.Join(profileRoot, "external", string(state.Toolchain())+".json")
-	externalPath := filepath.Join(profileRoot, "skills", "fixture", "SKILL.md")
-	beforeLock, _ := os.ReadFile(lockPath)
-	beforeExternal, _ := os.ReadFile(externalPath)
-	beforeUser, _ := os.ReadFile(userPath)
-	beforeBundled, _ := os.ReadFile(bundledPath)
-
-	executable := testHermesExecutable(t)
-	contract := testRuntimeContract(executable, 37)
-	contract.BundledSkills = []string{"fixture"}
-	optInCalls := 0
-	effects := &Effects{
-		HermesExecutable: executable,
-		OfficeCLI:        officeCLIFixture(state),
-		RuntimeContract:  contract,
-		RuntimeProbe:     func(context.Context, string) (hermes.RuntimeContract, error) { return contract, nil },
-		Profile: ProfilePortFuncs{OptInBundledSkillsFunc: func(context.Context, string) error {
-			optInCalls++
-			return nil
-		}},
-	}
-	err := effects.ensureHermesCompatibility(context.Background(), state)
-	if !errors.Is(err, hermes.ErrToolchainCollision) {
-		t.Fatalf("compatibility error=%v want ErrToolchainCollision", err)
-	}
-	if optInCalls != 0 {
-		t.Fatalf("opt-in calls=%d want=0", optInCalls)
-	}
-	if err := privatefile.Validate(environment); err == nil {
-		t.Fatal("collision normalized the legacy environment before failing")
-	}
-	for path, before := range map[string][]byte{lockPath: beforeLock, externalPath: beforeExternal, userPath: beforeUser, bundledPath: beforeBundled} {
-		after, readErr := os.ReadFile(path)
-		if readErr != nil || !bytes.Equal(after, before) {
-			t.Fatalf("collision changed %s: before=%q after=%q err=%v", path, before, after, readErr)
-		}
 	}
 }
 

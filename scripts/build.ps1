@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
-    [string]$Version = "v0.1.6",
-    [string]$OutputDir = "dist"
+    [string]$Version = "v0.1.8",
+    [string]$OutputDir = "dist",
+    [ValidateSet('All','WindowsAmd64')]$TargetSet = 'All'
 )
 
 $ErrorActionPreference = "Stop"
@@ -44,6 +45,7 @@ try {
         @{ OS = "darwin"; Arch = "amd64"; File = "teamkit-${Version}-darwin-amd64" },
         @{ OS = "darwin"; Arch = "arm64"; File = "teamkit-${Version}-darwin-arm64" }
     )
+    if ($TargetSet -eq 'WindowsAmd64') { $Targets = @($Targets[0]) }
 
     foreach ($Target in $Targets) {
         $env:GOOS = $Target.OS
@@ -60,7 +62,11 @@ try {
         } |
         Sort-Object
 
-    $HashLines | Set-Content -LiteralPath (Join-Path $Destination "SHA256SUMS") -Encoding ascii
+    $HashManifest = (($HashLines -join "`n") + "`n")
+    [System.IO.File]::WriteAllBytes(
+        (Join-Path $Destination "SHA256SUMS"),
+        [System.Text.Encoding]::ASCII.GetBytes($HashManifest)
+    )
     Write-Output "Built $($Targets.Count) artifacts in $Destination"
 }
 finally {

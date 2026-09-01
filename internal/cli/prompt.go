@@ -60,6 +60,12 @@ func (q *questionnaire) completeApplication(ctx context.Context, opts *options) 
 	return nil
 }
 
+func (q *questionnaire) completeHermesHome(ctx context.Context, opts *options) error {
+	if opts.operatingSystem != "windows" || opts.application != string(domain.AppHermes) {
+		return nil
+	}
+	return q.askText(ctx, &opts.hermesHome, "Введите короткий каталог установки Hermes (например, C:\\Hermes)")
+}
 func (q *questionnaire) completeKitHome(ctx context.Context, opts *options) error {
 	if err := q.askText(ctx, &opts.kitHome, "Введите каталог для проектов"); err != nil {
 		return err
@@ -118,13 +124,8 @@ func (q *questionnaire) askChoice(ctx context.Context, value *string, question s
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if _, err := fmt.Fprintf(q.out, "%s:\n", question); err != nil {
+		if err := writeChoices(q.out, question, choices); err != nil {
 			return err
-		}
-		for index, option := range choices {
-			if _, err := fmt.Fprintf(q.out, "  %d. %s\n", index+1, option.label); err != nil {
-				return err
-			}
 		}
 		if _, err := fmt.Fprint(q.out, "Введите номер ответа: "); err != nil {
 			return err
@@ -286,4 +287,16 @@ func environmentChoices(environments []environment.VerifiedEnvironment) []choice
 		result = append(result, choice{value: strconv.Itoa(index), label: label})
 	}
 	return append(result, choice{value: manualEnvironmentChoice, label: "Указать другой путь"})
+}
+
+func writeChoices(out io.Writer, prompt string, choices []choice) error {
+	if _, err := fmt.Fprintf(out, "%s:\n", prompt); err != nil {
+		return err
+	}
+	for index, option := range choices {
+		if _, err := fmt.Fprintf(out, "  %d. %s\n", index+1, option.label); err != nil {
+			return err
+		}
+	}
+	return nil
 }

@@ -79,13 +79,10 @@ type operationOfficeCLIAssetContract struct {
 }
 
 type operationHermesContract struct {
-	Mode                    string                      `json:"mode"`
-	MinimumVersion          string                      `json:"minimum_version,omitempty"`
-	MaximumExclusiveVersion string                      `json:"maximum_exclusive_version,omitempty"`
-	ObservedVersion         string                      `json:"observed_version,omitempty"`
-	SourceCommit            string                      `json:"source_commit,omitempty"`
-	Installer               *operationInstallerContract `json:"installer,omitempty"`
-	CertificateSHA256       string                      `json:"certificate_sha256"`
+	Mode              string                      `json:"mode"`
+	SourceCommit      string                      `json:"source_commit,omitempty"`
+	Installer         *operationInstallerContract `json:"installer,omitempty"`
+	CertificateSHA256 string                      `json:"certificate_sha256"`
 }
 
 // legacyRC2OperationContract is the closed operation identity emitted by
@@ -194,9 +191,7 @@ func defaultOperationContract(desired domain.DesiredState) (string, error) {
 	}
 	if desired.Application() == domain.AppHermes && desired.AppInstalled() {
 		contract.Hermes = &operationHermesContract{
-			Mode: "external-compatible", MinimumVersion: hermes.HermesMinimumVersion,
-			MaximumExclusiveVersion: hermes.HermesMaximumExclusiveVersion, ObservedVersion: desired.HermesVersion(),
-			CertificateSHA256: bootstrap.DefaultCertificateSHA256,
+			Mode: "external-compatible", CertificateSHA256: bootstrap.DefaultCertificateSHA256,
 		}
 	}
 	data, err := json.Marshal(contract)

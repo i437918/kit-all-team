@@ -126,7 +126,7 @@ func (p Profile) Render(provider Provider) ([]byte, error) {
 // RenderForSchema produces configuration for an audited schema proven from the
 // exact Hermes runtime. Version strings are deliberately not used as a proxy.
 func (p Profile) RenderForSchema(provider Provider, schema int) ([]byte, error) {
-	if schema != 34 && schema != 37 {
+	if schema <= 0 {
 		return nil, ErrConfigSchemaUnsupported
 	}
 	if p.Project == "" || p.Role == "" || p.KitHome == "" || p.Toolchain.Name == "" || p.Toolchain.Version == "" || p.V8StdEndpoint == "" || p.OfficeCLICommand != "" && !filepath.IsAbs(p.OfficeCLICommand) {

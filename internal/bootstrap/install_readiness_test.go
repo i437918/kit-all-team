@@ -4,15 +4,174 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"github.com/mi1man-cmd/kit-all-team/internal/testutil"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
+	"github.com/mi1man-cmd/kit-all-team/internal/catalog"
 	"github.com/mi1man-cmd/kit-all-team/internal/domain"
 	"github.com/mi1man-cmd/kit-all-team/internal/hermes"
+	"github.com/mi1man-cmd/kit-all-team/internal/privatefile"
 	"github.com/mi1man-cmd/kit-all-team/internal/reconcile"
+	"github.com/mi1man-cmd/kit-all-team/internal/testutil"
+	"gopkg.in/yaml.v3"
 )
+
+func TestEffects_ContinuationMaterializesSchema39HermesBootstrapEvidence(t *testing.T) {
+	home := testutil.TempDir(t)
+	desired, err := domain.NewDesiredState(domain.DesiredStateInput{
+		OS: domain.OSLinux, Application: domain.AppHermes, AppInstalled: true,
+		KitHome: filepath.Join(home, "kit"), HermesHome: filepath.Join(home, "hermes"),
+		Project: domain.ProjectAISUZ, Role: domain.RoleDeveloper, Toolchain: domain.ToolchainCC1CSkills,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeBootstrapManagedInstallFixture(t, desired.HermesHome(), hermes.HermesSourceCommit+"\n", true)
+	executable := standardHermesExecutable(desired)
+	runtimeContract, err := hermes.VerifyRuntimeContract(context.Background(), executable, nil)
+	if err != nil {
+		t.Fatalf("verify continuation runtime: %v", err)
+	}
+	if !desired.AppInstalled() || runtimeContract.ConfigSchema != 39 {
+		t.Fatalf("continuation state: app installed=%t schema=%d", desired.AppInstalled(), runtimeContract.ConfigSchema)
+	}
+	archive, digest := certificateFixture(t)
+	installerCalls := 0
+	officeEnsures := 0
+	office := officeCLIFixture(desired)
+	providerEnvironmentKey := "TEAMKIT_PUBLIC_PROVIDER_API_KEY"
+	fixtureValue := t.Name()
+	effects := &Effects{
+		InstallerPath: filepath.Join(home, "hermes-installer"),
+		Installer: InstallerPortFunc(func(context.Context, string) error {
+			installerCalls++
+			return errors.New("continuation invoked managed installer")
+		}),
+		HermesExecutable: executable,
+		RuntimeContract:  runtimeContract,
+		RuntimeProbe: func(ctx context.Context, path string) (hermes.RuntimeContract, error) {
+			return hermes.VerifyRuntimeContract(ctx, path, nil)
+		},
+		Git: GitPortFunc{SyncPinnedFunc: func(_ context.Context, _, commit, destination string) error {
+			return writePinnedSkillFixture(destination, commit, desired.Toolchain())
+		}},
+		Profile: profileFixture(home),
+		OfficeCLI: &fakeOfficeCLI{
+			path: office.Path(),
+			ensure: func(context.Context) error {
+				officeEnsures++
+				return nil
+			},
+		},
+		CertificateArchive: archive,
+		CertificateSHA256:  digest,
+		Secrets: &capturingSecrets{
+			values: map[string]string{providerEnvironmentKey: fixtureValue},
+			path:   filepath.Join(desired.HermesHome(), ".env"),
+		},
+		ProfileSecrets: &capturingSecrets{path: filepath.Join(profileDirectory(desired), ".env")},
+		ProfileEnvironment: map[string]string{
+			providerEnvironmentKey: fixtureValue,
+		},
+	}
+
+	for _, action := range []reconcile.ActionKind{
+		reconcile.ActionPrepareWorkspace,
+		reconcile.ActionInstallToolchain,
+		reconcile.ActionConfigureApplication,
+	} {
+		if err := effects.Apply(context.Background(), desired, reconcile.Action{Kind: action}); err != nil {
+			t.Fatalf("Apply(%s): %v", action, err)
+		}
+	}
+
+	if effects.RuntimeContract.ConfigSchema != 39 {
+		t.Fatalf("discovered runtime schema = %d, want 39", effects.RuntimeContract.ConfigSchema)
+	}
+	if installerCalls != 0 {
+		t.Fatalf("managed installer calls = %d, want 0", installerCalls)
+	}
+	configData, err := os.ReadFile(profilePath(desired))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		ConfigVersion int `yaml:"_config_version"`
+		Model         struct {
+			Default string `yaml:"default"`
+			APIKey  string `yaml:"api_key"`
+		} `yaml:"model"`
+		Providers map[string]struct {
+			KeyEnv       string `yaml:"key_env"`
+			DefaultModel string `yaml:"default_model"`
+		} `yaml:"providers"`
+		MCPServers map[string]struct {
+			Command string `yaml:"command"`
+			Enabled bool   `yaml:"enabled"`
+		} `yaml:"mcp_servers"`
+	}
+	if err := yaml.Unmarshal(configData, &config); err != nil {
+		t.Fatalf("materialized profile config: %v", err)
+	}
+	if config.ConfigVersion != 39 {
+		t.Fatalf("profile schema = %d, want 39", config.ConfigVersion)
+	}
+	provider, ok := config.Providers["public-provider"]
+	if !ok || config.Model.Default != "public-development" || provider.DefaultModel != "public-development" {
+		t.Fatal("materialized profile does not select public-development")
+	}
+	if config.Model.APIKey != "${TEAMKIT_PUBLIC_PROVIDER_API_KEY}" || provider.KeyEnv != providerEnvironmentKey {
+		t.Fatal("materialized profile does not reference TEAMKIT_PUBLIC_PROVIDER_API_KEY")
+	}
+	for _, id := range []string{"v8std", "public-provider-issues", "public-provider-wiki", "officecli"} {
+		server, exists := config.MCPServers[id]
+		if !exists || !server.Enabled {
+			t.Fatalf("materialized profile does not enable MCP %q", id)
+		}
+	}
+	if len(config.MCPServers) != 4 || config.MCPServers["officecli"].Command != office.Path() || officeEnsures != 1 {
+		t.Fatalf("OfficeCLI evidence: MCP count=%d ensure calls=%d", len(config.MCPServers), officeEnsures)
+	}
+
+	pin, err := catalog.LookupToolchain(domain.ToolchainCC1CSkills)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock, err := hermes.VerifiedToolchainLock(profileDirectory(desired), pin)
+	if err != nil {
+		t.Fatalf("selected toolchain artifact: %v", err)
+	}
+	if lock.Toolchain != domain.ToolchainCC1CSkills {
+		t.Fatalf("selected toolchain = %q, want %q", lock.Toolchain, domain.ToolchainCC1CSkills)
+	}
+
+	profileEnvironment := filepath.Join(profileDirectory(desired), ".env")
+	if err := privatefile.Validate(profileEnvironment); err != nil {
+		t.Fatalf("profile .env: %v", err)
+	}
+	environmentData, err := os.ReadFile(profileEnvironment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPresent := false
+	for _, line := range bytes.Split(environmentData, []byte("\n")) {
+		key, _, present := bytes.Cut(line, []byte("="))
+		if present && string(key) == providerEnvironmentKey {
+			keyPresent = true
+			break
+		}
+	}
+	if !keyPresent {
+		t.Fatal("profile .env lacks TEAMKIT_PUBLIC_PROVIDER_API_KEY")
+	}
+
+	observed, err := effects.Observe(context.Background(), desired, reconcile.UpdateNone)
+	if err != nil || !observed.ToolchainReady || !observed.ApplicationReady {
+		t.Fatalf("continuation bootstrap readiness: toolchain=%t application=%t err=%v", observed.ToolchainReady, observed.ApplicationReady, err)
+	}
+}
 
 func TestEffects_ObserveRequiresManagedHermesInstallForApplicationReadiness(t *testing.T) {
 	home := testutil.TempDir(t)
@@ -332,7 +491,7 @@ func writeReadyHermesProfileWithOfficeCLI(t *testing.T, desired domain.DesiredSt
 
 func writeBootstrapManagedInstallFixture(t *testing.T, home, head string, executable bool) {
 	t.Helper()
-	checkout := filepath.Join(home, ".teamkit", "hermes-agent-source")
+	checkout := filepath.Join(home, "hermes-agent")
 	if err := os.MkdirAll(filepath.Join(checkout, ".git"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -343,10 +502,20 @@ func writeBootstrapManagedInstallFixture(t *testing.T, home, head string, execut
 		return
 	}
 	executablePath := filepath.Join(checkout, "venv", "bin", "hermes")
+	if runtime.GOOS == "windows" {
+		executablePath = filepath.Join(checkout, "venv", "Scripts", "hermes.exe")
+	}
 	if err := os.MkdirAll(filepath.Dir(executablePath), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(executablePath, []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(checkout, "hermes_cli", "config_defaults.py")
+	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config, []byte("DEFAULT_CONFIG = {\n    \"_config_version\": 39,\n}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }

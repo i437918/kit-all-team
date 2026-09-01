@@ -6,10 +6,8 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/mi1man-cmd/kit-all-team/internal/domain"
 	"github.com/mi1man-cmd/kit-all-team/internal/pathsafe"
@@ -19,6 +17,9 @@ import (
 var (
 	ErrHomeAutoDetect = errors.New("HERMES_HOME_AUTO_DETECT_FAILED")
 	ErrHomeOverlap    = errors.New("HOME_PATH_OVERLAP")
+	// ErrExecutableNotFound reports that no executable exists at the exact
+	// standard path below an explicitly installed HERMES_HOME.
+	ErrExecutableNotFound = errors.New("HERMES_EXECUTABLE_NOT_FOUND")
 )
 
 type DiscoveryRequest struct {
@@ -77,14 +78,9 @@ func Discover(ctx context.Context, request DiscoveryRequest, dependencies Discov
 	for _, candidate := range exactCandidates(request.OS, home) {
 		_, statErr := deps.Lstat(candidate)
 		if statErr == nil {
-			contract, verifyErr := verifyDiscoveryExecutable(ctx, candidate, deps.Capture)
+			contract, verifyErr := verifyDiscoveryExecutable(ctx, candidate, request.OS, deps.Capture)
 			if verifyErr != nil {
 				return DiscoveryResult{}, verifyErr
-			}
-			info := contract.Info
-			derived, standard := standardHomeFromRuntime(request.OS, info)
-			if !standard || !samePath(home, derived, request.OS) {
-				return DiscoveryResult{}, homeError("exact runtime does not belong to the selected HERMES_HOME")
 			}
 			if err := requireExistingHome(home, deps.Lstat); err != nil {
 				return DiscoveryResult{}, err
@@ -92,47 +88,15 @@ func Discover(ctx context.Context, request DiscoveryRequest, dependencies Discov
 			if err := validateHomeAndOverlap(home, request.KitHome, deps); err != nil {
 				return DiscoveryResult{}, err
 			}
-			return DiscoveryResult{Installed: true, Home: home, Executable: info.Executable, Version: info.Version, Contract: contract}, nil
+			return DiscoveryResult{Installed: true, Home: home, Executable: contract.Info.Executable, Version: contract.Info.Version, Contract: contract}, nil
 		}
 		if !errors.Is(statErr, fs.ErrNotExist) {
 			return DiscoveryResult{}, fmt.Errorf("%w: exact executable cannot be inspected", ErrExecutableUnverified)
 		}
 	}
 
-	path, lookupErr := deps.LookPath("hermes")
-	if lookupErr == nil {
-		abs, absErr := deps.Abs(path)
-		if absErr != nil {
-			return DiscoveryResult{}, fmt.Errorf("%w: PATH executable is invalid", ErrExecutableUnverified)
-		}
-		contract, verifyErr := verifyDiscoveryExecutable(ctx, filepath.Clean(abs), deps.Capture)
-		if verifyErr != nil {
-			return DiscoveryResult{}, verifyErr
-		}
-		info := contract.Info
-		derived, standard := standardHomeFromRuntime(request.OS, info)
-		if authoritative {
-			if !standard || !samePath(home, derived, request.OS) {
-				return DiscoveryResult{}, homeError("PATH runtime does not belong to the selected HERMES_HOME")
-			}
-		} else if standard {
-			home = derived
-			if err := validateHomeAndOverlap(home, request.KitHome, deps); err != nil {
-				return DiscoveryResult{}, err
-			}
-		} else {
-			return DiscoveryResult{}, homeError("PATH runtime does not use a supported Hermes layout")
-		}
-		if err := requireExistingHome(home, deps.Lstat); err != nil {
-			return DiscoveryResult{}, err
-		}
-		return DiscoveryResult{Installed: true, Home: home, Executable: info.Executable, Version: info.Version, Contract: contract}, nil
-	}
-	if !errors.Is(lookupErr, exec.ErrNotFound) && lookupErr != nil {
-		return DiscoveryResult{}, fmt.Errorf("%w: PATH lookup failed", ErrExecutableUnverified)
-	}
 	if request.InstalledOverride != nil && *request.InstalledOverride {
-		return DiscoveryResult{}, fmt.Errorf("%w: Hermes executable was not found", ErrExecutableUnverified)
+		return DiscoveryResult{}, fmt.Errorf("%w: Hermes executable was not found", ErrExecutableNotFound)
 	}
 	if err := validateHomeAndOverlap(home, request.KitHome, deps); err != nil {
 		return DiscoveryResult{}, err
@@ -150,9 +114,6 @@ func discoveryDependencies(deps DiscoveryDependencies) DiscoveryDependencies {
 	if deps.UserHomeDir == nil {
 		deps.UserHomeDir = os.UserHomeDir
 	}
-	if deps.LookPath == nil {
-		deps.LookPath = exec.LookPath
-	}
 	if deps.Lstat == nil {
 		deps.Lstat = os.Lstat
 	}
@@ -160,9 +121,7 @@ func discoveryDependencies(deps DiscoveryDependencies) DiscoveryDependencies {
 		deps.Abs = filepath.Abs
 	}
 	if deps.Capture == nil {
-		deps.Capture = func(ctx context.Context, name string, args []string) ([]byte, error) {
-			return captureCommandBounded(ctx, name, args, maxVersionOutputBytes)
-		}
+		deps.Capture = func(context.Context, string, []string) ([]byte, error) { return nil, nil }
 	}
 	return deps
 }
@@ -261,22 +220,11 @@ func exactCandidates(family domain.OSFamily, home string) []string {
 	if family == domain.OSWindows {
 		return []string{filepath.Join(home, "hermes-agent", "venv", "Scripts", "hermes.exe")}
 	}
-	return []string{
-		filepath.Join(home, "hermes-agent", "venv", "bin", "hermes"),
-		filepath.Join(home, ".teamkit", "hermes-agent-source", "venv", "bin", "hermes"),
-	}
+	return []string{filepath.Join(home, "hermes-agent", "venv", "bin", "hermes")}
 }
 
-func verifyDiscoveryExecutable(ctx context.Context, path string, capture executableCapture) (RuntimeContract, error) {
-	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	return VerifyRuntimeContract(probeCtx, path, func(ctx context.Context, name string, args []string) ([]byte, error) {
-		data, err := capture(ctx, name, args)
-		if len(data) > maxVersionOutputBytes {
-			return nil, ErrExecutableUnverified
-		}
-		return data, err
-	})
+func verifyDiscoveryExecutable(ctx context.Context, path string, family domain.OSFamily, capture executableCapture) (RuntimeContract, error) {
+	return verifyRuntimeContractForOS(ctx, path, family, capture)
 }
 
 func requireExistingHome(home string, lstat func(string) (os.FileInfo, error)) error {

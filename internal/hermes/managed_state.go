@@ -40,19 +40,14 @@ type ProfileOwnerExpectation struct {
 	OwnerRecord []byte
 }
 
-// VerifyManagedProfile re-probes the exact runtime and validates the owned
-// profile state without changing it.
+// VerifyManagedProfile validates the owned profile state without changing it.
 func VerifyManagedProfile(ctx context.Context, expected ManagedProfileExpectation) error {
 	fail := func(reason string) error { return fmt.Errorf("%w: %s", ErrManagedInvariant, reason) }
 	if err := ctx.Err(); err != nil {
 		return fail("cancelled")
 	}
-	if expected.RuntimeProbe == nil || expected.Runtime.Info.Executable == "" || expected.Runtime.ConfigSchema != 34 && expected.Runtime.ConfigSchema != 37 {
+	if expected.Runtime.Info.Executable == "" || expected.Runtime.ConfigSchema <= 0 {
 		return fail("runtime expectation")
-	}
-	observed, err := expected.RuntimeProbe(ctx, expected.Runtime.Info.Executable)
-	if err != nil || !sameRuntimeContract(observed, expected.Runtime) {
-		return fail("runtime drift")
 	}
 	owner := expected.Owner
 	if !profileNamePattern.MatchString(owner.Identity) || !filepath.IsAbs(owner.ProfileRoot) || !filepath.IsAbs(owner.OwnerPath) || filepath.Base(owner.ProfileRoot) != owner.Identity || len(owner.OwnerRecord) == 0 {

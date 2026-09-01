@@ -6,11 +6,15 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/mi1man-cmd/kit-all-team/internal/catalog"
+	"github.com/mi1man-cmd/kit-all-team/internal/domain"
 	"github.com/mi1man-cmd/kit-all-team/internal/environment"
+	"github.com/mi1man-cmd/kit-all-team/internal/hermes"
+	"github.com/mi1man-cmd/kit-all-team/internal/pathsafe"
 	"github.com/mi1man-cmd/kit-all-team/internal/reconcile"
 	"github.com/mi1man-cmd/kit-all-team/internal/registry"
 )
@@ -108,14 +112,27 @@ func (r Runner) runInteractiveAdd(ctx context.Context, opts *options, q *questio
 	if err := q.completeApplication(ctx, opts); err != nil {
 		return r.fail(*opts, err, nil)
 	}
-	if err := q.completeKitHome(ctx, opts); err != nil {
-		return r.fail(*opts, err, nil)
-	}
-	if err := r.discoverHermes(ctx, opts); err != nil {
+	if opts.application == string(domain.AppHermes) && opts.operatingSystem == "windows" {
+		if err := r.prepareHermesHome(ctx, opts, q); err != nil {
+			return r.fail(*opts, err, nil)
+		}
+	} else if err := q.completeKitHome(ctx, opts); err != nil {
 		return r.fail(*opts, err, nil)
 	}
 	if err := q.completeProjectSelectors(ctx, opts); err != nil {
 		return r.fail(*opts, err, nil)
+	}
+	if err := r.discoverHermes(ctx, opts); err != nil {
+		if errors.Is(err, hermes.ErrExecutableNotFound) {
+			return r.writeHermesInstallHandoff(*opts)
+		}
+		return r.fail(*opts, err, nil)
+	}
+	if opts.application == string(domain.AppHermes) {
+		installed, _ := strconv.ParseBool(opts.appInstalled)
+		if !installed {
+			return r.writeHermesInstallHandoff(*opts)
+		}
 	}
 	addState, err := r.Environments.ClassifyAdd(ctx, opts.kitHome)
 	if err != nil {
@@ -282,6 +299,7 @@ func (r Runner) runInteractiveUpdate(ctx context.Context, opts *options, q *ques
 	if scope == reconcile.UpdateNone {
 		return ExitOK
 	}
+	ctx = withMutationProgress(ctx, r.Out, !opts.jsonOutput)
 	updatedPlan, err := r.Service.UpdateVerified(ctx, selected, scope)
 	if err != nil {
 		return r.fail(*opts, err, nil)
@@ -294,4 +312,78 @@ func (r Runner) runInteractiveUpdate(ctx context.Context, opts *options, q *ques
 		session.promote(ctx, r.Err, selected.Home)
 	}
 	return r.writeResult(*opts, commandResult{Command: "update", Status: status, Plan: finalPlan})
+}
+
+func (r Runner) prepareHermesHome(ctx context.Context, opts *options, q *questionnaire) error {
+	if opts.application != string(domain.AppHermes) || opts.operatingSystem != "windows" {
+		return nil
+	}
+	if err := q.completeHermesHome(ctx, opts); err != nil {
+		return err
+	}
+	if err := q.completeKitHome(ctx, opts); err != nil {
+		return err
+	}
+	if !filepath.IsAbs(opts.hermesHome) || filepath.Clean(opts.hermesHome) != opts.hermesHome {
+		return newOperationalError(codeInputRequired, "HERMES_HOME", nil)
+	}
+	if !filepath.IsAbs(opts.kitHome) || filepath.Clean(opts.kitHome) != opts.kitHome {
+		return newOperationalError(codeInputRequired, "KIT_ALL_TEAM_HOME", nil)
+	}
+	overlap, err := pathsafe.Overlaps(opts.hermesHome, opts.kitHome)
+	if err != nil || overlap {
+		return newOperationalError(codeInputRequired, "HERMES_HOME и KIT_ALL_TEAM_HOME не должны пересекаться", err)
+	}
+	if r.ConfigureHermesHome == nil {
+		return errors.New("HERMES_HOME_PERSIST_REQUIRED")
+	}
+	report := directProgress(r.Out, !opts.jsonOutput)
+	report(reconcile.ProgressEvent{Target: reconcile.ProgressHermesHome, Phase: reconcile.ProgressStarted, Application: string(domain.AppHermes)})
+	if err := r.ConfigureHermesHome(opts.hermesHome); err != nil {
+		report(reconcile.ProgressEvent{Target: reconcile.ProgressHermesHome, Phase: reconcile.ProgressFailed, Application: string(domain.AppHermes)})
+		return fmt.Errorf("HERMES_HOME_PERSIST_FAILED: %w", err)
+	}
+	report(reconcile.ProgressEvent{Target: reconcile.ProgressHermesHome, Phase: reconcile.ProgressCompleted, Application: string(domain.AppHermes)})
+	return nil
+}
+
+func formatHermesContinuation(executable string, opts options) (string, error) {
+	if strings.TrimSpace(executable) == "" {
+		return "", errors.New("TEAMKIT_EXECUTABLE_REQUIRED")
+	}
+	if !(opts.operatingSystem == "windows" && opts.application == "hermes" && opts.appInstalled == "true" && opts.update == "none") {
+		return "", errors.New("HERMES_CONTINUATION_INVALID")
+	}
+	for _, field := range []struct {
+		name, value string
+	}{
+		{"executable", executable}, {"kit-home", opts.kitHome}, {"hermes-home", opts.hermesHome},
+		{"project", opts.project}, {"role", opts.role}, {"toolchain", opts.toolchain},
+	} {
+		if strings.TrimSpace(field.value) == "" || environment.ValidateTerminalPath(field.value) != nil {
+			return "", fmt.Errorf("HERMES_CONTINUATION_VALUE_UNSAFE: %s", field.name)
+		}
+	}
+	return fmt.Sprintf("$env:HERMES_HOME = %s\n& %s apply --app-installed=true --os windows --app hermes --kit-home %s --hermes-home %s --project %s --role %s --toolchain %s --update none", powerShellQuote(opts.hermesHome), powerShellQuote(executable), powerShellQuote(opts.kitHome), powerShellQuote(opts.hermesHome), powerShellQuote(opts.project), powerShellQuote(opts.role), powerShellQuote(opts.toolchain)), nil
+}
+
+func (r Runner) writeHermesInstallHandoff(opts options) int {
+	executable, err := r.Executable()
+	if err != nil {
+		fmt.Fprintln(r.Err, "Не удалось определить путь Team Kit для команды продолжения.")
+		return ExitApplicationRequired
+	}
+	continuation := opts
+	continuation.appInstalled = "true"
+	command, err := formatHermesContinuation(executable, continuation)
+	if err != nil {
+		fmt.Fprintln(r.Err, "Не удалось сформировать команду продолжения Hermes.")
+		return ExitApplicationRequired
+	}
+	fmt.Fprintln(r.Out, "Отключите почтовый VPN только на время установки Hermes.")
+	fmt.Fprintf(r.Out, "Установите Hermes в выбранный HERMES_HOME: %s\n", opts.hermesHome)
+	fmt.Fprintln(r.Out, "После установки включите почтовый VPN для доступа к почтовым сервисам.")
+	fmt.Fprintln(r.Out, "Только после включения VPN выполните в PowerShell:")
+	fmt.Fprintln(r.Out, command)
+	return ExitApplicationRequired
 }

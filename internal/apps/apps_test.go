@@ -96,3 +96,27 @@ func TestPrepareHandoff_AllAlternativeApplicationsAndToolchainsAreExclusive(t *t
 		}
 	}
 }
+
+func TestPrepareHandoff_AIRules1CIncludesPinnedInstallInstructionOnly(t *testing.T) {
+	selected := catalog.Toolchains()[1]
+	handoff, err := PrepareHandoff(Application{ID: "codex", Installed: true}, HandoffRequest{
+		Toolchain: Toolchain{Name: string(selected.ID), Version: selected.Commit},
+		SecretValues: []string{
+			"gitlab-canary", "pochta-canary", "jira-canary", "confluence-canary",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(handoff.Command, "Follow AGENT-INSTALL.md from the pinned ai_rules_1c tree at the exact catalog commit.") {
+		t.Fatalf("handoff missing ai_rules_1c instruction: %q", handoff.Command)
+	}
+	for _, forbidden := range []string{"gitlab-canary", "pochta-canary", "jira-canary", "confluence-canary", catalog.Toolchains()[0].Origin, catalog.Toolchains()[0].Commit} {
+		if strings.Contains(handoff.Command, forbidden) {
+			t.Fatalf("handoff includes unselected value %q: %q", forbidden, handoff.Command)
+		}
+	}
+	if !strings.Contains(handoff.Command, "https://ai.v8std.ru/mcp") {
+		t.Fatalf("handoff missing v8std endpoint: %q", handoff.Command)
+	}
+}

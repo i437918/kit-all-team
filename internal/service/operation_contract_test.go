@@ -52,6 +52,8 @@ func TestDefaultOperationContract_HermesBindsOrderedMCPServers(t *testing.T) {
 		t.Fatal(err)
 	}
 	contract := fmt.Sprintf(`{"schema_version":1,"project":{"id":"wms","content_repository":"https://source.example.invalid/teamkit/repository.git","content_branch":"content-wms","database_repository":"https://source.example.invalid/teamkit/repository.git","database_branch":"develop"},"toolchain":{"id":"cc_1c_skills","origin":"https://github.com/Nikolay-Shirokov/cc-1c-skills.git","commit":"e01688e764a3cf1c1b4a0ad5069ea885837cfb2e"},"provider":{"id":"public-provider","name":"PublicProvider","base_url":"https://llm.example.invalid/v1","model":"public-development","api_mode":"chat_completions","api_key_environment":"TEAMKIT_PUBLIC_PROVIDER_API_KEY"},"mcp_servers":[{"id":"v8std","endpoint":"https://ai.v8std.ru/mcp"},{"id":"public-provider-issues","endpoint":"https://mcp.example.invalid/issues","headers":{"x-litellm-api-key":"Bearer ${TEAMKIT_PUBLIC_PROVIDER_API_KEY}","x-mcp-jira-authorization":"Token ${TEAMKIT_PUBLIC_ISSUES_KEY}"},"connect_timeout":60,"timeout":120,"sampling_enabled":false,"supports_parallel_tool_calls":false},{"id":"public-provider-wiki","endpoint":"https://mcp.example.invalid/wiki","headers":{"x-litellm-api-key":"Bearer ${TEAMKIT_PUBLIC_PROVIDER_API_KEY}","x-mcp-confluence-authorization":"Token ${TEAMKIT_PUBLIC_WIKI_KEY}"},"connect_timeout":60,"timeout":120,"sampling_enabled":false,"supports_parallel_tool_calls":false},{"id":"officecli","command":%s,"args":["mcp"],"asset":{"version":"1.0.144","commit":"1ced45e900782c5083ed550ddf328ee974e425e7","os":"linux","architecture":"amd64","file_name":"officecli-linux-x64","url":"https://github.com/iOfficeAI/OfficeCLI/releases/download/v1.0.144/officecli-linux-x64","size":35316133,"sha256":"32ef7a21a54a4ca6c9806bf5e9f3d32bfb1291017329c55044cb2aac71822eb8","update_policy":"auto_update_disabled_user_config","skill_refresh_policy":"existing_installed_only_best_effort"}}],"hermes":{"mode":"external-compatible","minimum_version":"0.20.1","maximum_exclusive_version":"0.21.0","observed_version":"0.20.1","certificate_sha256":"88d85e7e7d64c061c195f93c517500bdc91fccfb9b5a8115da9f6a5a17e689f8"}}`, command)
+	// Runtime version gates are intentionally not part of the external Hermes contract.
+	contract = strings.Replace(contract, `"minimum_version":"0.20.1","maximum_exclusive_version":"0.21.0","observed_version":"0.20.1",`, "", 1)
 	digest := sha256.Sum256([]byte(contract))
 	want := hex.EncodeToString(digest[:])
 	if got != want {
@@ -93,7 +95,7 @@ func TestDefaultOperationContract_HermesBindsOrderedMCPServers(t *testing.T) {
 	}
 }
 
-func TestService_PlanContractChangesWithRuntimeObservedForLegacyState(t *testing.T) {
+func TestService_PlanContractIgnoresObservedHermesVersion(t *testing.T) {
 	root := filepath.Join(testutil.TempDir(t), "workspace")
 	hermesHome := filepath.Join(testutil.TempDir(t), "hermes")
 	desired := testDesired(t, root, domain.AppHermes, true, hermesHome)
@@ -114,12 +116,12 @@ func TestService_PlanContractChangesWithRuntimeObservedForLegacyState(t *testing
 		contracts[version] = plan.ContractHash
 	}
 
-	if contracts["0.20.1"] == contracts["0.20.2"] {
-		t.Fatal("plans for observed Hermes 0.20.1 and 0.20.2 shared one contract")
+	if contracts["0.20.1"] != contracts["0.20.2"] {
+		t.Fatal("plans bound observed Hermes version into one operation contract")
 	}
 }
 
-func TestService_ApplyBindsRuntimeObservedVersionIntoContractAndReceipt(t *testing.T) {
+func TestService_ApplyDoesNotWriteObservedHermesVersionIntoReceipt(t *testing.T) {
 	for _, version := range []string{"0.20.1", "0.20.2"} {
 		version := version
 		t.Run(version, func(t *testing.T) {
@@ -166,8 +168,8 @@ func TestService_ApplyBindsRuntimeObservedVersionIntoContractAndReceipt(t *testi
 			if err != nil {
 				t.Fatalf("receipt desired: %v", err)
 			}
-			if bound.HermesVersion() != version {
-				t.Fatalf("receipt Hermes version = %q, want observed %q", bound.HermesVersion(), version)
+			if bound.HermesVersion() != "" {
+				t.Fatalf("receipt Hermes version = %q, want empty", bound.HermesVersion())
 			}
 			wantContract, err := defaultOperationContract(bound)
 			if err != nil {
@@ -177,69 +179,6 @@ func TestService_ApplyBindsRuntimeObservedVersionIntoContractAndReceipt(t *testi
 				t.Fatalf("contracts returned=%q stored=%q want receipt-bound=%q", plan.ContractHash, storedPlan.ContractHash, wantContract)
 			}
 		})
-	}
-}
-
-func TestService_ApplyRejectsHermesVersionDriftBeforePrivateAdapters(t *testing.T) {
-	t.Run("desired version mismatches runtime", func(t *testing.T) {
-		root := filepath.Join(testutil.TempDir(t), "workspace")
-		hermesHome := filepath.Join(testutil.TempDir(t), "hermes")
-		desired, err := domain.NewDesiredState(domain.DesiredStateInput{
-			OS: domain.OSLinux, Application: domain.AppHermes, AppInstalled: true,
-			KitHome: root, HermesHome: hermesHome, HermesVersion: "0.20.1",
-			Project: domain.ProjectWMS, Role: domain.RoleDeveloper, Toolchain: domain.ToolchainCC1CSkills,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		assertApplyRuntimeDriftBeforePrivateAdapters(t, desired, func(int) string { return "0.20.2" }, 1)
-	})
-
-	t.Run("runtime changes while acquiring lock", func(t *testing.T) {
-		root := filepath.Join(testutil.TempDir(t), "workspace")
-		hermesHome := filepath.Join(testutil.TempDir(t), "hermes")
-		desired := testDesired(t, root, domain.AppHermes, true, hermesHome)
-		assertApplyRuntimeDriftBeforePrivateAdapters(t, desired, func(call int) string {
-			if call == 1 {
-				return "0.20.1"
-			}
-			return "0.20.2"
-		}, 2)
-	})
-}
-
-func assertApplyRuntimeDriftBeforePrivateAdapters(t *testing.T, desired domain.DesiredState, version func(int) string, wantRuntimeCalls int) {
-	t.Helper()
-	runtimeCalls, privateCalls := 0, 0
-	svc := New(Options{
-		ResolveHermesRuntime: func(context.Context, domain.DesiredState) (hermes.DiscoveryResult, error) {
-			runtimeCalls++
-			return hermes.DiscoveryResult{
-				Installed: true, Home: desired.HermesHome(),
-				Executable: filepath.Join(desired.HermesHome(), "hermes-agent", "venv", "bin", "hermes"),
-				Version:    version(runtimeCalls),
-			}, nil
-		},
-		StateStore: func(string) (engine.Store, error) {
-			privateCalls++
-			return nil, errors.New("must not open state store")
-		},
-		SecretStore: func(string) (credentials.SecretStore, error) {
-			privateCalls++
-			return nil, errors.New("must not open secrets")
-		},
-		Effects: func(EffectInputs) engine.Effects {
-			privateCalls++
-			return failingEffects{}
-		},
-	})
-
-	_, err := svc.Apply(context.Background(), desired, reconcile.UpdateNone, cli.ApplyInputs{})
-	if err == nil || !strings.Contains(err.Error(), "HERMES_RUNTIME_DRIFT") {
-		t.Fatalf("Apply error = %v, want HERMES_RUNTIME_DRIFT", err)
-	}
-	if runtimeCalls != wantRuntimeCalls || privateCalls != 0 {
-		t.Fatalf("runtime calls=%d private adapters=%d, want %d and 0", runtimeCalls, privateCalls, wantRuntimeCalls)
 	}
 }
 
@@ -328,53 +267,6 @@ func TestService_ApplyAndUpdateUseFinalVerifiedHermesExecutableWithoutLateProbe(
 				t.Fatalf("%s effect executable = %q, want final verified %q", command, captured.HermesExecutable, finalExecutable)
 			}
 		})
-	}
-}
-
-func TestService_UpdateRejectsHermesRuntimeDriftBeforeStateSecretsOrEffects(t *testing.T) {
-	root := filepath.Join(testutil.TempDir(t), "workspace")
-	hermesHome := filepath.Join(testutil.TempDir(t), "hermes")
-	public := testDesired(t, root, domain.AppHermes, true, hermesHome)
-	input := desiredStateInput(public)
-	input.HermesVersion = "0.20.1"
-	public = mustDesiredState(t, input)
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	writeDesired(t, public)
-	if err := workspace.EnsureOwner(root, string(public.Project())); err != nil {
-		t.Fatal(err)
-	}
-
-	stateCalls, secretCalls, effectCalls := 0, 0, 0
-	svc := New(Options{
-		ResolveHermesRuntime: func(context.Context, domain.DesiredState) (hermes.DiscoveryResult, error) {
-			return hermes.DiscoveryResult{
-				Installed: true, Home: hermesHome,
-				Executable: filepath.Join(hermesHome, "runtime", "hermes"), Version: "0.20.2",
-			}, nil
-		},
-		ApplicationHome: func(domain.DesiredState) (string, error) { return hermesHome, nil },
-		StateStore: func(string) (engine.Store, error) {
-			stateCalls++
-			return nil, errors.New("must not open state")
-		},
-		SecretStore: func(string) (credentials.SecretStore, error) {
-			secretCalls++
-			return nil, errors.New("must not open secrets")
-		},
-		Effects: func(EffectInputs) engine.Effects {
-			effectCalls++
-			return failingEffects{}
-		},
-	})
-
-	_, err := svc.Update(context.Background(), root, reconcile.UpdateBoth)
-	if err == nil || !strings.Contains(err.Error(), "HERMES_RUNTIME_DRIFT") {
-		t.Fatalf("Update error = %v, want HERMES_RUNTIME_DRIFT", err)
-	}
-	if stateCalls != 0 || secretCalls != 0 || effectCalls != 0 {
-		t.Fatalf("state=%d secrets=%d effects=%d, want 0/0/0", stateCalls, secretCalls, effectCalls)
 	}
 }
 
@@ -528,10 +420,10 @@ func TestService_RetryRejectsUnsafePrivateHomeWithoutVersionBackfill(t *testing.
 	}
 }
 
-func TestService_CurrentHermesRecoveryRejectsDriftBeforePrivateAdapters(t *testing.T) {
+func TestService_CurrentHermesRecoveryRejectsSelectorOrContractDriftBeforePrivateAdapters(t *testing.T) {
 	for _, command := range []string{"status", "retry"} {
 		command := command
-		for _, drift := range []string{"selector", "public_version", "contract", "runtime"} {
+		for _, drift := range []string{"selector", "contract"} {
 			drift := drift
 			t.Run(command+"_"+drift, func(t *testing.T) {
 				root := filepath.Join(testutil.TempDir(t), "workspace")
@@ -597,8 +489,8 @@ func TestService_CurrentHermesRecoveryRejectsDriftBeforePrivateAdapters(t *testi
 	}
 }
 
-func TestService_RetryRejectsCurrentHermesRecoveryDriftUnderLock(t *testing.T) {
-	for _, drift := range []string{"selector", "receipt_version", "contract", "runtime"} {
+func TestService_RetryRejectsCurrentHermesRecoverySelectorOrContractDriftUnderLock(t *testing.T) {
+	for _, drift := range []string{"selector", "contract"} {
 		drift := drift
 		t.Run(drift, func(t *testing.T) {
 			root := filepath.Join(testutil.TempDir(t), "workspace")
@@ -706,7 +598,7 @@ func TestLegacyRC2OperationContract_PreservesFixtureHash(t *testing.T) {
 	}
 }
 
-func TestDefaultOperationContract_ChangesWithObservedHermesVersion(t *testing.T) {
+func TestDefaultOperationContract_IgnoresObservedHermesVersion(t *testing.T) {
 	base := domain.DesiredStateInput{OS: domain.OSLinux, Application: domain.AppHermes, AppInstalled: true, KitHome: filepath.Join(testutil.TempDir(t), "kit"), HermesHome: filepath.Join(testutil.TempDir(t), "hermes"), Project: domain.ProjectWMS, Role: domain.RoleDeveloper, Toolchain: domain.ToolchainCC1CSkills}
 	base.HermesVersion = "0.20.2"
 	first, err := domain.NewDesiredState(base)
@@ -726,8 +618,8 @@ func TestDefaultOperationContract_ChangesWithObservedHermesVersion(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a == b {
-		t.Fatal("operation contract ignored observed Hermes version")
+	if a != b {
+		t.Fatal("operation contract bound observed Hermes version")
 	}
 }
 
