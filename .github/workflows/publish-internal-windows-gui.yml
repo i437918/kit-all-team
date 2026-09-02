@@ -1,0 +1,139 @@
+name: publish internal unsigned Windows GUI
+
+on:
+  workflow_dispatch:
+    inputs:
+      canonical_sha:
+        description: Exact private GitLab master SHA qualified for the internal GUI release
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: internal-unsigned-gui-v0.1.8
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build and publish internal unsigned GUI installer
+    runs-on: windows-2025
+    timeout-minutes: 30
+    environment: teamkit-release-v0.1.8
+    steps:
+      - name: Validate and checkout the exact private source
+        shell: pwsh
+        env:
+          TEAMKIT_GITLAB_SOURCE_URL: ${{ secrets.TEAMKIT_GITLAB_SOURCE_URL }}
+          TEAMKIT_GITLAB_SOURCE_USERNAME: ${{ secrets.TEAMKIT_GITLAB_SOURCE_USERNAME }}
+          TEAMKIT_GITLAB_SOURCE_TOKEN: ${{ secrets.TEAMKIT_GITLAB_SOURCE_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-StrictMode -Version Latest
+          $canonicalSha = '${{ inputs.canonical_sha }}'.Trim()
+          if ($canonicalSha -notmatch '^[0-9a-f]{40}$') { throw 'CANONICAL_SHA_INVALID' }
+          foreach ($name in 'TEAMKIT_GITLAB_SOURCE_URL','TEAMKIT_GITLAB_SOURCE_USERNAME','TEAMKIT_GITLAB_SOURCE_TOKEN') {
+            if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) { throw "ENVIRONMENT_VARIABLE_REQUIRED: $name" }
+          }
+          $sourceRoot = Join-Path $env:RUNNER_TEMP "teamkit-private-$canonicalSha"
+          $askPass = Join-Path $env:RUNNER_TEMP 'teamkit-git-askpass.cmd'
+          @'
+          @echo off
+          echo %~1 | findstr /I /B "Username" >nul
+          if not errorlevel 1 (
+            echo %TEAMKIT_GITLAB_SOURCE_USERNAME%
+            exit /b 0
+          )
+          echo %TEAMKIT_GITLAB_SOURCE_TOKEN%
+          '@ | Set-Content -LiteralPath $askPass -Encoding ascii -NoNewline
+          $env:GIT_ASKPASS = $askPass
+          $env:GIT_TERMINAL_PROMPT = '0'
+          try {
+            $remoteLine = @(& git ls-remote --refs $env:TEAMKIT_GITLAB_SOURCE_URL refs/heads/master)
+            if ($LASTEXITCODE -ne 0 -or $remoteLine.Count -ne 1) { throw 'PRIVATE_MASTER_LOOKUP_FAILED' }
+            $remoteSha = ($remoteLine[0] -split '\s+')[0]
+            if ($remoteSha -cne $canonicalSha) { throw 'PRIVATE_MASTER_SHA_MISMATCH' }
+            & git clone --no-checkout $env:TEAMKIT_GITLAB_SOURCE_URL $sourceRoot
+            if ($LASTEXITCODE -ne 0) { throw 'PRIVATE_SOURCE_CLONE_FAILED' }
+            Push-Location $sourceRoot
+            try {
+              & git checkout --detach $canonicalSha
+              if ($LASTEXITCODE -ne 0) { throw 'PRIVATE_SOURCE_CHECKOUT_FAILED' }
+              $checkedOutSha = (& git rev-parse HEAD).Trim()
+              if ($checkedOutSha -cne $canonicalSha) { throw 'PRIVATE_SOURCE_CHECKOUT_SHA_MISMATCH' }
+              $originLine = @(& git ls-remote --refs origin refs/heads/master)
+              if ($LASTEXITCODE -ne 0 -or $originLine.Count -ne 1 -or (($originLine[0] -split '\s+')[0] -cne $canonicalSha)) {
+                throw 'PRIVATE_ORIGIN_SHA_MISMATCH'
+              }
+            } finally {
+              Pop-Location
+            }
+          } finally {
+            Remove-Item -LiteralPath $askPass -Force -ErrorAction SilentlyContinue
+            Remove-Item Env:GIT_ASKPASS -ErrorAction SilentlyContinue
+            Remove-Item Env:GIT_TERMINAL_PROMPT -ErrorAction SilentlyContinue
+          }
+          "TEAMKIT_PRIVATE_CHECKOUT=$sourceRoot" | Add-Content -LiteralPath $env:GITHUB_ENV -Encoding utf8
+          "TEAMKIT_CANONICAL_SHA=$canonicalSha" | Add-Content -LiteralPath $env:GITHUB_ENV -Encoding utf8
+
+      - name: Set up Go from private source
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: ${{ runner.temp }}\teamkit-private-${{ inputs.canonical_sha }}\go.mod
+          check-latest: false
+
+      - name: Build and verify the unsigned GUI installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-StrictMode -Version Latest
+          Push-Location $env:TEAMKIT_PRIVATE_CHECKOUT
+          try {
+            & '.\scripts\build-windows-installer.ps1' -Version 'v0.1.8' -OutputDir 'release-artifact' -SigningMode InternalUnsigned
+            if ($LASTEXITCODE -ne 0) { throw 'INTERNAL_GUI_BUILD_FAILED' }
+            & '.\scripts\verify-windows-installer.ps1' `
+              -InstallerPath '.\release-artifact\TeamKitSetup-0.1.8.exe' `
+              -Version 'v0.1.8' `
+              -ChecksumPath '.\release-artifact\SHA256SUMS' `
+              -ManifestPath '.\release-artifact\WINDOWS-INSTALLER-MANIFEST.json' `
+              -RequireUnsigned
+            if ($LASTEXITCODE -ne 0) { throw 'INTERNAL_GUI_VERIFICATION_FAILED' }
+            $evidenceDirectory = Join-Path $env:RUNNER_TEMP 'teamkit-internal-gui-artifact'
+            New-Item -ItemType Directory -Path $evidenceDirectory -Force | Out-Null
+            foreach ($name in 'TeamKitSetup-0.1.8.exe','SHA256SUMS','WINDOWS-INSTALLER-MANIFEST.json') {
+              Copy-Item -LiteralPath (Join-Path '.\release-artifact' $name) -Destination (Join-Path $evidenceDirectory $name) -Force
+            }
+          } finally {
+            Pop-Location
+          }
+
+      - name: Publish canonical GitLab package, tag, and release
+        shell: pwsh
+        env:
+          TEAMKIT_GITLAB_SOURCE_URL: ${{ secrets.TEAMKIT_GITLAB_SOURCE_URL }}
+          TEAMKIT_GITLAB_RELEASE_TOKEN: ${{ secrets.TEAMKIT_GITLAB_RELEASE_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Push-Location $env:TEAMKIT_PRIVATE_CHECKOUT
+          try {
+            $artifactDirectory = Join-Path $env:TEAMKIT_PRIVATE_CHECKOUT 'release-artifact'
+            & '.\scripts\release\Publish-GitHubWindowsInstaller.ps1' `
+              -CanonicalSha $env:TEAMKIT_CANONICAL_SHA `
+              -Version 'v0.1.8' `
+              -ArtifactDirectory $artifactDirectory
+            if (-not $?) { throw 'INTERNAL_GUI_PUBLICATION_FAILED' }
+          } finally {
+            Pop-Location
+          }
+
+      - name: Upload internal GUI installer evidence
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: internal-unsigned-gui-v0.1.8
+          path: |
+            ${{ runner.temp }}\teamkit-internal-gui-artifact\TeamKitSetup-0.1.8.exe
+            ${{ runner.temp }}\teamkit-internal-gui-artifact\SHA256SUMS
+            ${{ runner.temp }}\teamkit-internal-gui-artifact\WINDOWS-INSTALLER-MANIFEST.json
+          if-no-files-found: error
+          retention-days: 7
