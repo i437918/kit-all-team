@@ -122,7 +122,7 @@ jobs:
               -CanonicalSha $env:TEAMKIT_CANONICAL_SHA `
               -Version 'v0.1.8' `
               -ArtifactDirectory $artifactDirectory
-            if ($LASTEXITCODE -ne 0) { throw 'INTERNAL_GUI_PUBLICATION_FAILED' }
+            if (-not $?) { throw 'INTERNAL_GUI_PUBLICATION_FAILED' }
           } finally {
             Pop-Location
           }
