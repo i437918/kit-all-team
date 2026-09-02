@@ -18,7 +18,7 @@ concurrency:
 jobs:
   publish:
     name: Build and publish internal unsigned GUI installer
-    runs-on: windows-2025
+    runs-on: [self-hosted, Windows, X64, teamkit-internal-windows]
     timeout-minutes: 30
     environment: teamkit-release-v0.1.8
     steps:
