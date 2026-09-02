@@ -117,7 +117,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           Push-Location $env:TEAMKIT_PRIVATE_CHECKOUT
           try {
-            $artifactDirectory = [IO.Path]::GetFullPath('.\release-artifact')
+            $artifactDirectory = Join-Path $env:TEAMKIT_PRIVATE_CHECKOUT 'release-artifact'
             & '.\scripts\release\Publish-GitHubWindowsInstaller.ps1' `
               -CanonicalSha $env:TEAMKIT_CANONICAL_SHA `
               -Version 'v0.1.8' `
